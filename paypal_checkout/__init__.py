@@ -23,6 +23,11 @@ from .exceptions import (  # noqa: E402
     PayPalValidationError,
 )
 from .money import amount_payload, format_amount, parse_amount  # noqa: E402
+from .signals import (  # noqa: E402
+    payment_captured,
+    payment_denied,
+    payment_refunded,
+)
 
 __all__ = [
     "__version__",
@@ -34,6 +39,9 @@ __all__ = [
     "format_amount",
     "parse_amount",
     "amount_payload",
+    "payment_captured",
+    "payment_denied",
+    "payment_refunded",
     "PayPalError",
     "PayPalConfigurationError",
     "PayPalIdempotencyError",

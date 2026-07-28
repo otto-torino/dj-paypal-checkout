@@ -4,8 +4,10 @@ A modern, REST-first PayPal integration for Django: **Orders v2** checkout,
 refunds and **verified webhooks**, with models, signals and admin.
 
 > **Status: in development — nothing released yet.**
-> Implemented: configuration, OAuth2 authentication with token caching, and the
-> sync/async HTTP clients (M0–M1). Not yet: orders, models, signals, webhooks.
+> Implemented: configuration, OAuth2 auth with token caching, sync/async HTTP
+> clients, amount handling, order/capture models with persisted idempotency keys,
+> the Orders v2 create/capture flow, signals and a read-only admin.
+> Not yet: authorize, webhooks, refunds, subscriptions.
 > See [PROGRESS.md](PROGRESS.md). Do not use it in production; the API will
 > change until 0.1.0.
 

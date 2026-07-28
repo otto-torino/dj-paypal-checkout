@@ -303,9 +303,30 @@ Work items:
       Generic FK (`object_id` is a Char, so UUID pks work) + `for_target()`.
       Admin is deliberately read-only — a window for support ("which key did we
       send?"), never an editor of payment state.
-- [ ] create / show / capture / authorize, with the `request_id` scheme above
-      generated and persisted by the wrapper, never by the caller
-- [ ] signals (`payment_captured`, `payment_denied`, `payment_refunded`)
+- [x] **`orders.py` + `signals.py`** (2026-07-28) — `create_order`, `refresh_order`,
+      `fetch_order`, `capture_order` (full and partial). Each writes its row
+      first, passes that row's persisted key and declares
+      `Idempotency.REQUIRED`, so strict mode is satisfied *by construction* — a
+      test asserts create+capture run clean under `STRICT_IDEMPOTENCY=True`.
+      Amounts are always built here from the caller's figures, never read back
+      from the browser. Signals `payment_captured` / `payment_denied` fire from
+      the capture outcome (`PENDING` sends nothing — not an outcome yet).
+      Wrappers are **sync only**: the ORM helpers run in a transaction and async
+      versions need more than adding `await`. The async *client* is unaffected.
+      - Guard worth noting: when the caller supplies `purchase_units`, their
+        total must match the recorded `amount` or the call is refused *before*
+        any HTTP request and before the row is written — otherwise the row could
+        say EUR 10 while the buyer is charged EUR 100. Skipped when the units
+        can't be read (other currency, missing amount), so a partial check never
+        becomes a false rejection.
+      - When a capture response contains no capture object, the attempt is left
+        `INITIATED` and a structured warning is logged: money may have moved, and
+        recording a guess would be worse than recording "unknown".
+- [ ] **`authorize` deliberately not done yet.** It needs an `Authorization`
+      model plus a second capture path (`/v2/payments/authorizations/{id}/capture`),
+      i.e. a third model and another flow. Half-implementing it would be worse
+      than leaving it out, so the CAPTURE-intent flow landed first. Next item
+      here.
 - [ ] flip `STRICT_IDEMPOTENCY` to default `True` (before 0.1.0; now gated only
       on the wrappers, since the enum has landed)
 - [ ] template tag for the JS SDK v6 script + button container

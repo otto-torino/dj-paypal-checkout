@@ -3,8 +3,8 @@ API reference
 
 .. note::
 
-   Grows as the milestones land. Orders, models, signals and webhook handling
-   are not implemented yet.
+   Grows as the milestones land. Webhook handling, refunds and subscriptions are
+   not implemented yet.
 
 Configuration
 -------------
@@ -36,12 +36,25 @@ Authentication
    :members:
    :member-order: bysource
 
+Orders
+------
+
+.. automodule:: paypal_checkout.orders
+   :members:
+   :member-order: bysource
+
 Models
 ------
 
 .. automodule:: paypal_checkout.models
    :members:
    :member-order: bysource
+
+Signals
+-------
+
+.. automodule:: paypal_checkout.signals
+   :members:
 
 Exceptions
 ----------

@@ -6,6 +6,7 @@ sandbox.
 """
 
 from collections import defaultdict, deque
+from contextlib import contextmanager
 
 import httpx
 
@@ -24,6 +25,22 @@ def make_config(**overrides):
     }
     values.update(overrides)
     return PayPalConfig(**values)
+
+
+@contextmanager
+def catch_signal(signal):
+    """Collect the kwargs of every ``signal`` sent inside the block."""
+    received = []
+
+    def handler(sender, **kwargs):
+        kwargs["sender"] = sender
+        received.append(kwargs)
+
+    signal.connect(handler, weak=False)
+    try:
+        yield received
+    finally:
+        signal.disconnect(handler)
 
 
 class FakePayPal:

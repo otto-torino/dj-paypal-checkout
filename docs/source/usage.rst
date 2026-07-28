@@ -168,20 +168,91 @@ and in its ``str()``. The subclasses are
 ``retry_after``) and
 :class:`~paypal_checkout.exceptions.PayPalServerError` (5xx).
 
-Orders, models and signals
---------------------------
+Orders
+------
 
-.. warning::
+:mod:`paypal_checkout.orders` is the layer you should normally use: it builds the
+amount, writes a row before calling PayPal, and supplies the persisted
+idempotency key for you. Import it from the module (not from the package root —
+it touches models, so it must be imported after the app registry is ready):
 
-   Not implemented yet — planned for M2/M3, see ``PROGRESS.md``. The section
-   below records the intended shape.
+.. code-block:: python
 
-Business logic will hang off signals rather than views, so it runs the same way
-whether a payment is confirmed by a capture call or by a webhook:
+   from paypal_checkout import PayPalClient
+   from paypal_checkout.orders import create_order, capture_order
 
-* ``payment_captured``
-* ``payment_denied``
-* ``payment_refunded``
+   with PayPalClient() as client:
+       order = create_order(client, amount=cart.total, target=cart)
+       # order.paypal_id goes to the JS SDK; the browser never sees the amount.
 
-Handlers must be idempotent: PayPal retries webhooks, and the same event may
-be delivered more than once.
+   # ...after the buyer approves...
+   with PayPalClient() as client:
+       capture = capture_order(client, order)
+       if capture.is_successful:
+           ...
+
+``create_order`` accepts ``currency`` (defaults to ``PAYPAL['CURRENCY']``),
+``intent``, ``target`` (any model instance — it is linked through a generic FK),
+``application_context``, ``payment_source``, and ``purchase_units`` for orders it
+cannot express on its own. When you pass your own units their total must match
+``amount``, and a mismatch is refused before any call: the local row and PayPal
+have to agree on what the buyer is charged.
+
+``capture_order`` takes ``amount`` for a partial capture. Also available:
+``refresh_order(client, order)`` to re-read an order into its row, and
+``fetch_order(client, paypal_id)`` for a raw read with no local row.
+
+These helpers are synchronous. The async client is available for direct calls,
+but the wrappers are not async yet.
+
+What survives a crash
+---------------------
+
+Every operation writes its row **first**, with status ``INITIATED``, so an
+interrupted call is discoverable rather than lost:
+
+.. code-block:: python
+
+   from paypal_checkout.models import PayPalOrder
+
+   PayPalOrder.objects.pending()        # started locally, never confirmed
+   order.pending_capture()              # a capture attempt of unknown outcome
+
+An unconfirmed capture attempt is **reused** by the next ``capture_order`` call,
+key and all — its outcome is unknown, so it may have reached PayPal, and reusing
+the key lets PayPal deduplicate it. A *new* attempt after a decline gets its own
+row and its own key, which is why the key carries the attempt
+(``order:42:capture:7``) rather than being fixed per order.
+
+If PayPal answers a capture without a capture object in it, the attempt is left
+``INITIATED`` on purpose: money may have moved, and recording a guess would be
+worse than recording "unknown".
+
+Signals
+-------
+
+Business logic belongs here rather than in a view, so it runs the same way
+whether the outcome arrived from a capture call or (from M3) from a webhook:
+
+.. code-block:: python
+
+   from django.dispatch import receiver
+   from paypal_checkout import payment_captured
+
+   @receiver(payment_captured)
+   def mark_paid(sender, capture, order, target, **kwargs):
+       if target and not target.paid:      # idempotent on purpose
+           target.paid = True
+           target.save(update_fields=["paid"])
+
+* ``payment_captured`` — money captured (``COMPLETED``)
+* ``payment_denied`` — refused (``DECLINED``/``FAILED``); no money moved
+* ``payment_refunded`` — from M4
+
+All three send ``sender=Capture`` with ``capture``, ``order`` and ``target``
+(the linked object, or ``None``). A ``PENDING`` capture sends nothing: it is not
+an outcome yet.
+
+**Handlers must be idempotent.** The same outcome can legitimately reach you
+twice — a capture call and its confirming webhook describe one event, and PayPal
+retries webhooks. Guard your writes; never increment blindly.
