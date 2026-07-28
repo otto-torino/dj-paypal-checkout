@@ -356,7 +356,17 @@ Work items:
       - The tags deliberately stop at loading the SDK. Wiring buttons to
         create/capture endpoints is application code (URLs, CSRF, error
         handling), and belongs in the demo rather than in a half-right tag.
-- [ ] `example/` demo: cart → button → capture → order marked paid
+- [x] **`example/` demo + `run_demo.sh`** (2026-07-28) — cart → JS SDK v6 button →
+      create → approve → capture → order marked paid by a signal receiver. Runs
+      with `STRICT_IDEMPOTENCY: True` to prove the helpers satisfy the target
+      posture. The checkout page lists the local `PayPalOrder` rows with their
+      keys, so you can watch a row appear *before* PayPal is called.
+      Smoke-verified: page renders 200, loads `/web-sdk/v6/core`, exposes the
+      client id, renders the server-side amount, and **does not leak the secret**.
+      Sandbox credentials come from the environment; `run_demo.sh` refuses to
+      start without them.
+      - No `run_demo.bat` (the sibling repos have one): I can't test a Windows
+        script here, and a broken one is worse than none. Follow-up if wanted.
 
 ### M3 — webhooks
 - [ ] offline verification + API fallback, `WebhookEvent` model, dedupe

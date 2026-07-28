@@ -49,6 +49,17 @@ This library targets the current REST APIs and fills those gaps:
 - Python 3.11+
 - Django 5.2 LTS or 6.0
 
+## Try it
+
+`example/` is a runnable sandbox checkout — two endpoints, signals, and a
+read-only admin:
+
+```bash
+export PAYPAL_CLIENT_ID=...      # sandbox REST app credentials
+export PAYPAL_CLIENT_SECRET=...
+./run_demo.sh                    # http://127.0.0.1:8000/
+```
+
 ## Development
 
 ```bash

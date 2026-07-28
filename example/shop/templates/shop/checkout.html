@@ -1,0 +1,98 @@
+{% load paypal_checkout %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>dj-paypal-checkout demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; }
+    #paypal-button { padding: .75rem 1.5rem; font-size: 1rem; cursor: pointer; }
+    #status { margin-top: 1.5rem; padding: .75rem; background: #f4f4f5; }
+    table { border-collapse: collapse; margin-top: 2rem; width: 100%; font-size: .85rem; }
+    th, td { border-bottom: 1px solid #ddd; padding: .35rem .5rem; text-align: left; }
+  </style>
+</head>
+<body>
+  <h1>Checkout</h1>
+
+  <p>
+    Order <strong>{{ order.reference }}</strong> —
+    {{ order.total }} {{ order.currency }} —
+    {% if order.paid %}<strong>paid</strong>{% else %}unpaid{% endif %}
+  </p>
+
+  <p>The amount above comes from the server. The browser only ever learns an order id.</p>
+
+  <button id="paypal-button" type="button">Pay with PayPal</button>
+  <div id="status"></div>
+
+  {% if paypal_orders %}
+    <table>
+      <caption style="text-align:left">Local PayPal rows for this order</caption>
+      <tr><th>PayPal id</th><th>Status</th><th>Idempotency key</th></tr>
+      {% for paypal_order in paypal_orders %}
+        <tr>
+          <td>{{ paypal_order.paypal_id|default:"—" }}</td>
+          <td>{{ paypal_order.status }}</td>
+          <td><code>{{ paypal_order.request_id }}</code></td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+
+  {% csrf_token %}
+  {% paypal_sdk %}
+
+  <script>
+    const csrfToken = document.querySelector("[name=csrfmiddlewaretoken]").value;
+    const cfg = JSON.parse(document.getElementById("paypal-sdk-config").textContent);
+    const status = document.getElementById("status");
+    const button = document.getElementById("paypal-button");
+
+    const say = (text) => { status.textContent = text; };
+
+    const post = async (url) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {"X-CSRFToken": csrfToken},
+      });
+      if (!response.ok) throw new Error(`${url} -> ${response.status}`);
+      return response.json();
+    };
+
+    // Our server decides the amount; this only asks for an order id.
+    const createOrder = async () => {
+      const {orderId} = await post("{% url 'paypal-create' %}");
+      say(`PayPal order ${orderId} created.`);
+      return {orderId};
+    };
+
+    (async () => {
+      const sdk = await window.paypal.createInstance({
+        clientId: cfg.clientId,
+        components: cfg.components,
+      });
+
+      const session = sdk.createPayPalOneTimePaymentSession({
+        async onApprove(data) {
+          say("Approved, capturing…");
+          const result = await post(`/paypal/${data.orderId}/capture/`);
+          say(result.successful
+            ? `Captured (${result.captureId}). Reload to see the order marked paid.`
+            : `Capture ended as ${result.status}.`);
+        },
+        onCancel() { say("Cancelled by the buyer."); },
+        onError(error) { say(`Error: ${error}`); },
+      });
+
+      button.addEventListener("click", async () => {
+        try {
+          await session.start({presentationMode: "auto"}, createOrder());
+        } catch (error) {
+          say(`Error: ${error}`);
+        }
+      });
+      say(`SDK ready (${cfg.environment}, ${cfg.currency}).`);
+    })();
+  </script>
+</body>
+</html>
