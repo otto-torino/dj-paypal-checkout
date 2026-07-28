@@ -7,6 +7,11 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Give the environment required reviewers in the repository settings and a
+    # release needs a human click, even if a version bump reaches main by
+    # accident. The name must match the "Environment name" of the PyPI trusted
+    # publisher, or the OIDC claim will not match and publishing will fail.
+    environment: pypi
     permissions:
       id-token: write   # OIDC token for PyPI Trusted Publishing
       contents: write   # create and push the version tag

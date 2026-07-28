@@ -546,11 +546,31 @@ Still open, but none of them block M0/M1:
 
 #### Release prerequisites (2026-07-28)
 
-- [ ] **Required**: create `otto-torino/dj-paypal-checkout`, add the remote, push
-      `main`.
-- [ ] **Required for publishing**: PyPI Trusted Publishing for
-      `dj-paypal-checkout` (the workflow uses OIDC, so there is no API token to
-      store).
+- [x] **Repo created and pushed**: https://github.com/otto-torino/dj-paypal-checkout
+      — **public**, like the sibling libraries (MIT, destined for PyPI, and the
+      README badges point at public URLs). Topics: django, paypal, payments,
+      django-app. `main` pushed, 16 commits.
+- [x] **First CI run green**: all four matrix jobs plus `docs`. Two things proved
+      themselves in production rather than only locally:
+      - `publish.yml` ran and **skipped** — "Version is the 0.0.0 placeholder —
+        nothing released yet, skipping publish." The guard I added instead of
+        copying `dj-editor-js` verbatim is what stopped an empty package from
+        going to PyPI on the very first push.
+      - the **Codecov upload succeeded with no token**, confirming `use_oidc`.
+- [ ] **PyPI Trusted Publishing — use a *pending publisher*.** The project does
+      not need to exist first; that is exactly what pending publishers are for.
+      At https://pypi.org/manage/account/publishing/ (account settings, *not* a
+      project page) add a new pending publisher for GitHub with:
+      `PyPI Project Name: dj-paypal-checkout`, `Owner: otto-torino`,
+      `Repository name: dj-paypal-checkout`, `Workflow name: publish.yml`,
+      `Environment name: pypi`. On the first successful publish it converts into
+      a normal publisher and creates the project — and note the name is **not
+      reserved** until then.
+- [ ] **Create the `pypi` environment** in the repo settings and give it required
+      reviewers. `publish.yml` now declares `environment: pypi`, so a release
+      waits for a human click even if a version bump reaches `main` by accident —
+      the explicit go-ahead enforced by infrastructure rather than by asking.
+      ⚠️ The environment name must match on both sides: change one, change both.
 - [x] **No `CODECOV_TOKEN` at all.** I had copied `token: ${{ secrets.CODECOV_TOKEN }}`
       from `dj-editor-js` (codecov-action v4). Elisa pointed at
       `www/django-copier`, which uploads with **`use_oidc: true`** on
