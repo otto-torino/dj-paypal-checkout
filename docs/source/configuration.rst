@@ -28,20 +28,22 @@ Never commit credentials. Read them from the environment.
 Reference
 ---------
 
-============= ============== ==================================================
-Key           Default        Meaning
-============= ============== ==================================================
-CLIENT_ID     *(required)*   PayPal REST app client id.
-CLIENT_SECRET *(required)*   PayPal REST app secret.
-LIVE          ``False``      ``True`` targets the live API instead of sandbox.
-WEBHOOK_ID    ``""``         Registered webhook id, to verify signatures.
-CURRENCY      ``"EUR"``      Default currency, 3-letter ISO-4217 code.
-TIMEOUT       ``30.0``       Per-request timeout in seconds.
-MAX_RETRIES   ``2``          Extra attempts for requests safe to repeat.
-RETRY_BACKOFF ``0.5``        Base of the exponential backoff, in seconds.
-CACHE_ALIAS   ``"default"``  Django cache alias used to store access tokens.
-TOKEN_LEEWAY  ``300``        Refresh the token this long before expiry.
-============= ============== ==================================================
+================== ============== =============================================
+Key                Default        Meaning
+================== ============== =============================================
+CLIENT_ID          *(required)*   PayPal REST app client id.
+CLIENT_SECRET      *(required)*   PayPal REST app secret.
+LIVE               ``False``      ``True`` targets the live API, not sandbox.
+WEBHOOK_ID         ``""``         Registered webhook id, to verify signatures.
+CURRENCY           ``"EUR"``      Default currency, 3-letter ISO-4217 code.
+TIMEOUT            ``30.0``       Per-request timeout in seconds.
+MAX_RETRIES        ``2``          Extra attempts for requests safe to repeat.
+RETRY_BACKOFF      ``0.5``        Base of the exponential backoff, in seconds.
+STRICT_IDEMPOTENCY ``False``      Raise instead of warning on a write with no
+                                  ``request_id`` (see below).
+CACHE_ALIAS        ``"default"``  Django cache alias storing access tokens.
+TOKEN_LEEWAY       ``300``        Refresh the token this long before expiry.
+================== ============== =============================================
 
 Misconfiguration raises
 :class:`~paypal_checkout.exceptions.PayPalConfigurationError`, which is also an
@@ -61,6 +63,28 @@ code path that can pick the wrong environment:
    'https://api-m.sandbox.paypal.com'
    >>> get_config(live=True).base_url
    'https://api-m.paypal.com'
+
+Strict idempotency
+------------------
+
+A mutating request sent without ``request_id`` cannot be retried safely, so the
+client logs a warning on the ``paypal_checkout.client`` logger and carries on
+with a single attempt. Turning ``STRICT_IDEMPOTENCY`` on promotes that warning
+to a :class:`~paypal_checkout.exceptions.PayPalIdempotencyError`, raised
+*before* anything reaches PayPal:
+
+.. code-block:: python
+
+   # settings/dev.py, settings/ci.py, settings/staging.py
+   PAYPAL = {**PAYPAL, "STRICT_IDEMPOTENCY": True}
+
+Use it everywhere except production, so a call site that forgot its
+``request_id`` is caught by a test rather than by a PayPal outage. It is off by
+default on purpose: refusing to even attempt a capture is worse than attempting
+it once, and a single attempt is always safe.
+
+Both the warning and the error are silent when ``MAX_RETRIES`` is ``0`` — with
+retries disabled there is no retry for a missing key to make unsafe.
 
 Multiple accounts
 -----------------

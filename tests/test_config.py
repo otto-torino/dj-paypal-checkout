@@ -90,7 +90,14 @@ class GetConfigTests(SimpleTestCase):
             get_config()
 
     @override_settings(
-        PAYPAL={**MINIMAL, "MAX_RETRIES": 5, "TOKEN_LEEWAY": 60, "RETRY_BACKOFF": 0.1, "CACHE_ALIAS": "default"}
+        PAYPAL={
+            **MINIMAL,
+            "MAX_RETRIES": 5,
+            "TOKEN_LEEWAY": 60,
+            "RETRY_BACKOFF": 0.1,
+            "CACHE_ALIAS": "default",
+            "STRICT_IDEMPOTENCY": 1,
+        }
     )
     def test_all_tuning_keys_are_accepted(self):
         config = get_config()
@@ -98,6 +105,11 @@ class GetConfigTests(SimpleTestCase):
         self.assertEqual(config.token_leeway, 60)
         self.assertEqual(config.retry_backoff, 0.1)
         self.assertEqual(config.cache_alias, "default")
+        self.assertIs(config.strict_idempotency, True)
+
+    @override_settings(PAYPAL=MINIMAL)
+    def test_strict_idempotency_is_off_by_default(self):
+        self.assertIs(get_config().strict_idempotency, False)
 
     @override_settings(PAYPAL=MINIMAL)
     def test_overrides_win_over_settings(self):

@@ -79,6 +79,13 @@ restart or a re-run job is what needs a persistent, deterministic id from your
 application — which is why the higher-level order/payment helpers will own it
 rather than leaving it to the caller.
 
+The client never invents an id for you: an auto-generated UUID would make
+retries *look* safe while offering nothing after a crash, since the re-run would
+mint a different one. A missing ``request_id`` is information — it says the
+caller has not declared the persistent identity of the operation — so the client
+reports it (a warning, or an error under ``STRICT_IDEMPOTENCY``) instead of
+papering over it.
+
 Errors
 ------
 

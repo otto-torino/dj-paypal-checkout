@@ -10,6 +10,7 @@ from django.core.exceptions import ImproperlyConfigured
 __all__ = [
     "PayPalError",
     "PayPalConfigurationError",
+    "PayPalIdempotencyError",
     "PayPalConnectionError",
     "PayPalAPIError",
     "PayPalAuthenticationError",
@@ -29,6 +30,14 @@ class PayPalConfigurationError(PayPalError, ImproperlyConfigured):
 
     Also an ``ImproperlyConfigured`` so it surfaces like any other Django
     misconfiguration.
+    """
+
+
+class PayPalIdempotencyError(PayPalError):
+    """A mutating request was attempted without an idempotency key.
+
+    Only raised when ``PAYPAL['STRICT_IDEMPOTENCY']`` is on — a caller-side
+    programming error, raised *before* anything is sent to PayPal.
     """
 
 

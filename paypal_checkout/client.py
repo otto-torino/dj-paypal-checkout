@@ -12,6 +12,7 @@ uses to deduplicate. Without it, a failed POST is raised, never repeated.
 """
 
 import asyncio
+import logging
 import random
 import time
 
@@ -22,11 +23,14 @@ from .config import get_config
 from .exceptions import (
     PayPalAPIError,
     PayPalConnectionError,
+    PayPalIdempotencyError,
     error_from_response,
     retry_after_seconds,
 )
 
 __all__ = ["PayPalClient", "AsyncPayPalClient"]
+
+logger = logging.getLogger(__name__)
 
 #: Methods that can be repeated without changing the outcome.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
@@ -82,6 +86,31 @@ class _BasePayPalClient:
         if method.upper() in SAFE_METHODS:
             return True
         return bool(request_id)
+
+    def _check_idempotency(self, method, request_id):
+        """Report a mutating request that cannot be retried safely.
+
+        Deliberately *not* a refusal by default: a single attempt is always
+        safe, and declining to even try a capture is worse than trying it once.
+        The point is to make the missing key visible — as a warning normally,
+        as an error when ``STRICT_IDEMPOTENCY`` is on (dev/CI/staging).
+
+        Silent when retries are disabled entirely, since then there is no
+        retry for the missing key to make unsafe.
+        """
+        if self.config.max_retries == 0:
+            return
+        if self._is_safe_to_retry(method, request_id):
+            return
+        message = (
+            f"{method} without a request_id: this write cannot be retried safely "
+            "and will be raised on the first failure. Pass request_id with an id "
+            "that is stable for this operation and persisted before the call "
+            "(e.g. 'order:42:capture:1')."
+        )
+        if self.config.strict_idempotency:
+            raise PayPalIdempotencyError(message)
+        logger.warning(message)
 
     def _should_retry_status(self, status_code, method, request_id, attempt):
         if attempt >= self.config.max_retries:
@@ -166,6 +195,7 @@ class PayPalClient(_BasePayPalClient):
         was obtained.
         """
         method = method.upper()
+        self._check_idempotency(method, request_id)
         url = self._url(path)
         attempt = 0
         token_refreshed = False
@@ -257,6 +287,7 @@ class AsyncPayPalClient(_BasePayPalClient):
         authenticate=True,
     ):
         method = method.upper()
+        self._check_idempotency(method, request_id)
         url = self._url(path)
         attempt = 0
         token_refreshed = False

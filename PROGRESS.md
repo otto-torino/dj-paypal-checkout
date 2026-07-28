@@ -165,7 +165,9 @@ The first release is the bump to `0.1.0` on `main`.
       that header — otherwise a retried capture could charge twice. Same rule
       applies to connection errors, since the request may have reached PayPal.
       A 401 replay is exempt: nothing happened server-side.
-- [x] Tests: 108 total, **100% coverage incl. branches**. All HTTP goes through
+- [x] `STRICT_IDEMPOTENCY` config + `PayPalIdempotencyError` + the missing-key
+      warning (added after review; see the M2 idempotency contract below).
+- [x] Tests: 119 total, **100% coverage incl. branches**. All HTTP goes through
       an `httpx.MockTransport` (`tests/support.py::FakePayPal`) — no live or
       sandbox calls anywhere.
 - [x] 401 contract pinned by explicit tests (added after review): the replay
@@ -211,9 +213,30 @@ deliberately *sharp*. Requirements:
   without one is simply not retried. Auto-generating would make
   `_is_safe_to_retry` always true for writes, silently removing the "the caller
   has thought about idempotency" signal — and it would not help across a crash
-  anyway. Accepted cost: transient PayPal blips on a bare `client.post()` turn
-  into manual reconciliation. The wrappers are what remove that cost, by always
-  supplying a persisted id.
+  anyway, since the re-run would mint a different UUID. Accepted cost: transient
+  PayPal blips on a bare `client.post()` turn into manual reconciliation. The
+  wrappers are what remove that cost, by always supplying a persisted id.
+- **Decided** (Elisa's "modalità più rigorosa", refined): a mutating request with
+  no `request_id` is *reported*, not refused — `logger.warning` on
+  `paypal_checkout.client` — and `PAYPAL['STRICT_IDEMPOTENCY'] = True` promotes it
+  to `PayPalIdempotencyError`, raised **before** anything is sent (not even the
+  token request). Intended for dev/CI/staging. Two deviations from the original
+  proposal, both deliberate:
+  - **Not coupled to `max_retries` as a validity condition.** Making a call
+    *invalid* because of a transport tuning knob means the same code raises in
+    one project's settings and works in another's; bumping `MAX_RETRIES` from 0
+    to 2 would break working call sites. The knob does decide *relevance*
+    though, so the diagnostic is silent at `max_retries == 0` — there is no
+    retry for the missing key to endanger. Right instinct, different lever.
+  - **Off by default, not fail-fast in production.** "Fail immediately rather
+    than reconcile later" holds when the alternative is an *unsafe retry*; here
+    the alternative is a *single* attempt, which is always safe. Refusing to
+    attempt a capture at all converts ~99% success into 100% failure. So it is
+    a dev/CI lint, not a runtime policy.
+  - Also worth noting: the "mutating ⇒ needs a key" rule is not universal —
+    side-effect-free POSTs exist (e.g. `/v1/notifications/verify-webhook-signature`,
+    which M3 will call). Our own M3 call can use the transmission id as a natural
+    stable key, but a hard universal rule would misfire on a caller's harmless POST.
 
 Work items:
 - [ ] create / show / capture / authorize, with the `request_id` scheme above

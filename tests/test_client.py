@@ -8,6 +8,7 @@ from paypal_checkout.exceptions import (
     PayPalAPIError,
     PayPalAuthenticationError,
     PayPalConnectionError,
+    PayPalIdempotencyError,
     PayPalRateLimitError,
     PayPalServerError,
     PayPalValidationError,
@@ -131,6 +132,67 @@ class BackoffTests(SimpleTestCase):
         self.assertTrue(0.5 <= client._backoff(0) <= 1.5)
         self.assertTrue(1.0 <= client._backoff(1) <= 3.0)
         self.assertLessEqual(client._backoff(20), 30.0)
+
+
+class IdempotencyDiagnosticsTests(SimpleTestCase):
+    """A missing request_id must be visible, without refusing safe work."""
+
+    def setUp(self):
+        cache.clear()
+
+    def test_write_without_request_id_warns(self):
+        fake = FakePayPal().queue(ORDERS, httpx.Response(201, json={}))
+        with PayPalClient(make_config(), transport=fake.transport) as client:
+            with self.assertLogs("paypal_checkout.client", level="WARNING") as logs:
+                client.post(ORDERS, json={})
+
+        self.assertIn("POST without a request_id", logs.output[0])
+        self.assertEqual(len(fake.api_requests()), 1, "the call still goes through")
+
+    def test_write_with_request_id_is_silent(self):
+        fake = FakePayPal().queue(ORDERS, httpx.Response(201, json={}))
+        with PayPalClient(make_config(), transport=fake.transport) as client:
+            with self.assertNoLogs("paypal_checkout.client", level="WARNING"):
+                client.post(ORDERS, json={}, request_id="order:42:capture:1")
+
+    def test_safe_methods_are_silent(self):
+        fake = FakePayPal().queue(ORDERS, httpx.Response(200, json={}))
+        with PayPalClient(make_config(), transport=fake.transport) as client:
+            with self.assertNoLogs("paypal_checkout.client", level="WARNING"):
+                client.get(ORDERS)
+
+    def test_silent_when_retries_are_disabled(self):
+        """With max_retries=0 there is no retry for a missing key to endanger."""
+        fake = FakePayPal().queue(ORDERS, httpx.Response(201, json={}))
+        with PayPalClient(make_config(max_retries=0), transport=fake.transport) as client:
+            with self.assertNoLogs("paypal_checkout.client", level="WARNING"):
+                client.post(ORDERS, json={})
+
+    def test_strict_mode_raises_before_sending_anything(self):
+        fake = FakePayPal()
+        config = make_config(strict_idempotency=True)
+        with PayPalClient(config, transport=fake.transport) as client:
+            with self.assertRaises(PayPalIdempotencyError):
+                client.post(ORDERS, json={})
+
+        self.assertEqual(fake.requests, [], "not even the token request must happen")
+
+    def test_strict_mode_allows_writes_with_a_request_id(self):
+        fake = FakePayPal().queue(ORDERS, httpx.Response(201, json={"id": "5O1"}))
+        config = make_config(strict_idempotency=True)
+        with PayPalClient(config, transport=fake.transport) as client:
+            self.assertEqual(
+                client.post(ORDERS, json={}, request_id="order:42:capture:1"), {"id": "5O1"}
+            )
+
+    def test_strict_mode_does_not_affect_safe_methods(self):
+        fake = FakePayPal().queue(ORDERS, httpx.Response(200, json={"ok": True}))
+        config = make_config(strict_idempotency=True)
+        with PayPalClient(config, transport=fake.transport) as client:
+            self.assertEqual(client.get(ORDERS), {"ok": True})
+
+    def test_strict_mode_is_off_by_default(self):
+        self.assertFalse(make_config().strict_idempotency)
 
 
 class RetrySafetyRulesTests(SimpleTestCase):
@@ -466,6 +528,24 @@ class AsyncClientTests(SimpleTestCase):
             self.assertEqual(await client.delete(ORDERS), {})
 
         self.assertEqual([r.method for r in fake.api_requests()], ["PATCH", "DELETE"])
+
+    async def test_write_without_request_id_warns(self):
+        fake = FakePayPal().queue(ORDERS, httpx.Response(201, json={}))
+        async with AsyncPayPalClient(make_config(), transport=fake.transport) as client:
+            with self.assertLogs("paypal_checkout.client", level="WARNING") as logs:
+                await client.post(ORDERS, json={})
+
+        self.assertIn("POST without a request_id", logs.output[0])
+
+    async def test_strict_mode_raises_before_sending_anything(self):
+        fake = FakePayPal()
+        async with AsyncPayPalClient(
+            make_config(strict_idempotency=True), transport=fake.transport
+        ) as client:
+            with self.assertRaises(PayPalIdempotencyError):
+                await client.post(ORDERS, json={})
+
+        self.assertEqual(fake.requests, [])
 
     async def test_replay_reuses_the_same_request_id(self):
         fake = FakePayPal().queue(

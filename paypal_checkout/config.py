@@ -34,6 +34,7 @@ _ALIASES = {
     "TIMEOUT": "timeout",
     "MAX_RETRIES": "max_retries",
     "RETRY_BACKOFF": "retry_backoff",
+    "STRICT_IDEMPOTENCY": "strict_idempotency",
     "CACHE_ALIAS": "cache_alias",
     "TOKEN_LEEWAY": "token_leeway",
 }
@@ -67,6 +68,13 @@ class PayPalConfig:
     #: Base for the exponential backoff between retries, in seconds.
     #: Set to 0 in tests to keep them fast.
     retry_backoff: float = 0.5
+
+    #: Turn the "mutating request without an idempotency key" warning into a
+    #: hard error. Meant for dev/CI/staging, so a missing ``request_id`` is
+    #: found by a test rather than by a PayPal blip in production. Off by
+    #: default: refusing to even attempt a capture is worse than attempting it
+    #: once, and a single attempt is always safe.
+    strict_idempotency: bool = False
 
     #: Django cache alias used to store OAuth access tokens.
     cache_alias: str = "default"
@@ -104,7 +112,7 @@ def _coerce(name, value):
         if not isinstance(value, str):
             raise PayPalConfigurationError(f"{setting} must be a string, got {type(value).__name__}.")
         return value.strip()
-    if name == "live":
+    if name in {"live", "strict_idempotency"}:
         return bool(value)
     if name in {"timeout", "retry_backoff"}:
         try:
