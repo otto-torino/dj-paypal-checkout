@@ -622,6 +622,15 @@ Still open, but none of them block M0/M1:
       Elisa is an org `admin`, so no owner approval is needed; the org's
       third-party *application* policy governs OAuth apps, not GitHub Apps.
 
+      ✅ Installed 2026-07-28: `read-the-docs-community`,
+      `repository_selection=selected`.
+
+      Do **not** expect a per-repository webhook, and do not go looking for one: a
+      GitHub App receives events on its own single endpoint for every repo in the
+      installation, which is part of why RTD moved off the OAuth app. `hooks` on
+      the repo staying empty is the correct state. (I predicted a webhook here
+      first, reasoning from the old OAuth integration — wrong.)
+
       Our side is done and enforced: `.readthedocs.yaml` sets
       `sphinx.fail_on_warning: true`, and CI has a separate `docs` job running
       `sphinx-build -W --keep-going`, so a broken build fails the pull request
