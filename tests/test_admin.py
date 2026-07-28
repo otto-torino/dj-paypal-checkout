@@ -11,9 +11,17 @@ from paypal_checkout.admin import (
     CaptureAdmin,
     CaptureInline,
     PayPalOrderAdmin,
+    RefundAdmin,
+    RefundInline,
     WebhookEventAdmin,
 )
-from paypal_checkout.models import Authorization, Capture, PayPalOrder, WebhookEvent
+from paypal_checkout.models import (
+    Authorization,
+    Capture,
+    PayPalOrder,
+    Refund,
+    WebhookEvent,
+)
 
 
 class AdminRegistrationTests(TestCase):
@@ -26,6 +34,7 @@ class AdminRegistrationTests(TestCase):
         self.assertIsInstance(
             django_admin.site._registry[WebhookEvent], WebhookEventAdmin
         )
+        self.assertIsInstance(django_admin.site._registry[Refund], RefundAdmin)
 
 
 class ReadOnlyTests(TestCase):
@@ -35,11 +44,13 @@ class ReadOnlyTests(TestCase):
             PayPalOrderAdmin(PayPalOrder, django_admin.site),
             AuthorizationAdmin(Authorization, django_admin.site),
             CaptureAdmin(Capture, django_admin.site),
+            RefundAdmin(Refund, django_admin.site),
             WebhookEventAdmin(WebhookEvent, django_admin.site),
         )
         self.inlines = (
             CaptureInline(PayPalOrder, django_admin.site),
             AuthorizationInline(PayPalOrder, django_admin.site),
+            RefundInline(Capture, django_admin.site),
         )
 
     def test_nothing_can_be_added_changed_or_deleted(self):

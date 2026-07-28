@@ -10,7 +10,9 @@ increment counters blindly.
 
 All signals send ``sender=Capture`` and provide ``capture``, ``order`` and
 ``target`` (the host project's object, or ``None`` when the order was not
-linked to one).
+linked to one). ``payment_refunded`` additionally provides ``refund`` when the
+refund is known — a webhook can report a refund this project never initiated, in
+which case it is absent, so always accept ``**kwargs``.
 """
 
 from django.dispatch import Signal
@@ -23,5 +25,6 @@ payment_captured = Signal()
 #: The capture was refused (``DECLINED``/``FAILED``). No money moved.
 payment_denied = Signal()
 
-#: A capture was refunded, fully or partially. Sent from M4 onwards.
+#: A capture was refunded, fully or partially. Carries ``refund`` when this
+#: project initiated it; a webhook about someone else's refund does not.
 payment_refunded = Signal()

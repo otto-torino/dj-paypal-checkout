@@ -7,7 +7,7 @@ idempotency key?"), not to let anyone hand-edit payment state.
 
 from django.contrib import admin
 
-from .models import Authorization, Capture, PayPalOrder, WebhookEvent
+from .models import Authorization, Capture, PayPalOrder, Refund, WebhookEvent
 
 
 class ReadOnlyInline(admin.TabularInline):
@@ -27,6 +27,12 @@ class CaptureInline(ReadOnlyInline):
 class AuthorizationInline(ReadOnlyInline):
     model = Authorization
     fields = ("paypal_id", "status", "amount", "currency", "expires_at", "request_id")
+    readonly_fields = fields
+
+
+class RefundInline(ReadOnlyInline):
+    model = Refund
+    fields = ("paypal_id", "status", "amount", "currency", "request_id", "created_at")
     readonly_fields = fields
 
 
@@ -114,10 +120,19 @@ class AuthorizationAdmin(admin.ModelAdmin):
 
 @admin.register(Capture)
 class CaptureAdmin(admin.ModelAdmin):
-    list_display = ("__str__", "order", "status", "amount", "currency", "created_at")
+    list_display = (
+        "__str__",
+        "order",
+        "status",
+        "amount",
+        "currency",
+        "refunded_amount",
+        "created_at",
+    )
     list_filter = ("status", "currency", "final_capture")
     search_fields = ("paypal_id", "request_id", "order__paypal_id")
     date_hierarchy = "created_at"
+    inlines = (RefundInline,)
     readonly_fields = (
         "order",
         "authorization",
@@ -178,6 +193,39 @@ class WebhookEventAdmin(admin.ModelAdmin):
     @admin.display(description="Environment", ordering="live")
     def environment(self, obj):
         return "live" if obj.live else "sandbox"
+
+    def get_fields(self, request, obj=None):
+        return self.readonly_fields
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Refund)
+class RefundAdmin(admin.ModelAdmin):
+    list_display = ("__str__", "capture", "status", "amount", "currency", "created_at")
+    list_filter = ("status", "currency")
+    search_fields = ("paypal_id", "request_id", "capture__paypal_id", "invoice_id")
+    date_hierarchy = "created_at"
+    readonly_fields = (
+        "capture",
+        "paypal_id",
+        "request_id",
+        "status",
+        "amount",
+        "currency",
+        "note_to_payer",
+        "invoice_id",
+        "raw",
+        "created_at",
+        "updated_at",
+    )
 
     def get_fields(self, request, obj=None):
         return self.readonly_fields

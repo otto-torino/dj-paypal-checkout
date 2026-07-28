@@ -449,9 +449,45 @@ Work items:
       it; the earlier test cleanup was a silent no-op because `get_handlers()`
       returns a copy).
 
-### M4 — refunds & reconciliation
-- [ ] refunds (full/partial), `Refund` model, `payment_refunded` signal
-- [ ] management command to re-sync an order/capture from PayPal
+### M4 — refunds & reconciliation ✅ done 2026-07-28
+- [x] **`Refund` model + `payments.py`** (migration `0004`) — `refund_capture`
+      (full and partial) and `void_authorization`. Key scheme
+      `order:<pk>:refund:<refund_pk>`, per refund, so two partial refunds are two
+      operations rather than one replayed twice.
+- [x] **A refund past the captured amount is refused locally**, before the row is
+      written, counting refunds whose outcome we do not know
+      (`reserved_refund_amount` includes `INITIATED` — it may have reached
+      PayPal). PayPal would refuse it too, but only afterwards, by which time the
+      local row would claim money was returned that never was. `refunded_amount`
+      (completed only) and `refundable_amount` are exposed for callers.
+      A completed refund syncs the capture to `REFUNDED`/`PARTIALLY_REFUNDED`.
+- [x] **`void_authorization`** — the one key that is *not* per attempt and *not*
+      stored (`void_request_id`), documented as a deliberate exception: voiding
+      is single-shot, so there is no attempt dimension, and PayPal refuses a
+      second void rather than repeating it, so key drift cannot move money.
+      **Worth a second opinion**, since it breaks the "store the key" rule.
+- [x] **Fixed a real bug found while writing this**: the M3 handler for
+      `PAYMENT.CAPTURE.REFUNDED` treated `resource.id` as a *capture* id, but for
+      that event the resource is the **refund**. It now resolves the capture via
+      `related_ids.capture_id` (falling back to the `up` link), and **adopts** a
+      refund it has never seen — which is how a refund issued straight from the
+      PayPal dashboard now lands in the local records.
+- [x] **`paypal_sync` management command + `reconcile_order`** — the way out of
+      "unconfirmed for ever". An interrupted attempt has no PayPal id, so it
+      cannot be fetched directly; re-reading the *order* reveals whether the
+      capture happened, and the local row is settled (signals included).
+      Adoption is conservative on purpose: only one unconfirmed attempt against
+      one unmatched PayPal capture. Anything more ambiguous is reported for a
+      person — guessing which attempt became which capture is not something to do
+      silently with money. Flags: `--order`, `--unconfirmed`, `--since`,
+      `--limit`, `--dry-run`.
+- [x] **`STRICT_IDEMPOTENCY` now defaults to `True`** — the gate (all money-moving
+      wrappers supplying persisted keys) is met. `tests/support.make_config()`
+      forces it off explicitly, since most tests exercise the raw client's lenient
+      path; separate tests assert the shipped default.
+- [x] Read-only `RefundAdmin` + inline on captures; `refunded_amount` in the
+      capture list.
+- [x] 418 tests, **100% coverage incl. branches**.
 
 **← v0.1 released here** (decision 2: M0–M4 is the first release)
 
@@ -502,9 +538,12 @@ Still open, but none of them block M0/M1:
       (currently `django-paypal/`, which no longer matches the package).
 - [x] **M3 webhooks done** (2026-07-28). 337 tests, 100% coverage, verification
       tested against real RSA signatures.
-- [ ] **M4 — next.** Refunds (`payments.py` + `Refund` model, reusing the
-      per-attempt key scheme `order:<pk>:refund:<refund_pk>`),
-      `void_authorization`, a re-sync management command, then flip
-      `STRICT_IDEMPOTENCY` to `True` and release 0.1.0.
+- [x] **M4 done** (2026-07-28): refunds, voids, reconciliation command, strict
+      default flipped. 418 tests, 100% coverage.
+- [ ] **0.1.0 is ready to cut but NOT cut.** Everything in M0–M4 is done and
+      verified; bumping `version` in `pyproject.toml` on `main` *is* the release,
+      so it needs an explicit go-ahead. Before it: create
+      `otto-torino/dj-paypal-checkout`, PyPI Trusted Publishing, `CODECOV_TOKEN`.
+- [ ] M5 — subscriptions (products/plans catalog, subscription lifecycle).
 
 *Reminder: semantic commits, subject only, no body, no Co-Authored-By trailer.*

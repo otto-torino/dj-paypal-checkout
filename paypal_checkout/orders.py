@@ -36,6 +36,7 @@ __all__ = [
     "capture_order",
     "authorize_order",
     "capture_authorization",
+    "reconcile_order",
 ]
 
 logger = logging.getLogger(__name__)
@@ -282,6 +283,94 @@ def capture_authorization(client, authorization, *, amount=None, final_capture=T
     capture.update_from_payload(payload)
     _notify(capture, authorization.order)
     return capture
+
+
+def reconcile_order(client, order):
+    """Re-read an order from PayPal and settle what it says about our rows.
+
+    This is the way out of "unconfirmed for ever": a row whose call was
+    interrupted has no PayPal id, so it cannot be looked up directly — but the
+    *order* knows about it, and re-reading the order reveals whether the capture
+    or authorization actually happened.
+
+    Returns a dict describing what changed, for the management command to report.
+
+    Adoption is deliberately conservative: an unconfirmed local attempt is
+    matched to a PayPal capture only when there is exactly one of each. Anything
+    more ambiguous is reported and left for a person — guessing which of two
+    attempts became which capture is not something to do silently with money.
+    """
+    if not order.paypal_id:
+        return {"order": str(order), "status": order.status, "action": "no-paypal-id"}
+
+    payload = fetch_order(client, order.paypal_id)
+    order.update_from_payload(payload)
+
+    result = {"order": order.paypal_id, "status": order.status, "adopted": [], "ambiguous": []}
+    _reconcile_attempts(
+        order,
+        remote=_all_captures(payload),
+        local=list(order.captures.filter(status=Capture.Status.INITIATED)),
+        kind="capture",
+        result=result,
+    )
+    _reconcile_attempts(
+        order,
+        remote=_all_authorizations(payload),
+        local=list(
+            order.authorizations.filter(status=Authorization.Status.INITIATED)
+        ),
+        kind="authorization",
+        result=result,
+    )
+    return result
+
+
+def _all_captures(payload):
+    return _nested(payload, "captures")
+
+
+def _all_authorizations(payload):
+    return _nested(payload, "authorizations")
+
+
+def _nested(payload, key):
+    found = []
+    for unit in payload.get("purchase_units") or []:
+        if not isinstance(unit, dict):
+            continue
+        for item in (unit.get("payments") or {}).get(key) or []:
+            if isinstance(item, dict) and item.get("id"):
+                found.append(item)
+    return found
+
+
+def _reconcile_attempts(order, *, remote, local, kind, result):
+    """Attach PayPal's view of an attempt to the local row that started it."""
+    model = Capture if kind == "capture" else Authorization
+    known_ids = set(
+        model.objects.filter(paypal_id__in=[item["id"] for item in remote]).values_list(
+            "paypal_id", flat=True
+        )
+    )
+    unmatched = [item for item in remote if item["id"] not in known_ids]
+
+    if not local or not unmatched:
+        return
+    if len(local) > 1 or len(unmatched) > 1:
+        result["ambiguous"].append(
+            f"{len(local)} unconfirmed local {kind}(s) and {len(unmatched)} "
+            f"unmatched PayPal {kind}(s) on order {order.paypal_id}; "
+            "resolve by hand"
+        )
+        logger.warning(result["ambiguous"][-1])
+        return
+
+    row = local[0]
+    row.update_from_payload(unmatched[0])
+    result["adopted"].append(f"{kind} {row.paypal_id} -> {row.status}")
+    if kind == "capture":
+        _notify(row, order)
 
 
 def _notify(capture, order):

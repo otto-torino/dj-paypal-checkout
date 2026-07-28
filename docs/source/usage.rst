@@ -139,6 +139,54 @@ Padding is fine (``10.1`` → ``"10.10"``); *dropping* digits is not. Rounding i
 your decision, not the library's — silently rounding would charge the buyer
 something other than what your own records say.
 
+Refunds and voids
+-----------------
+
+:mod:`paypal_checkout.payments` follows the same rules — persisted key, amount
+built here, policy declared:
+
+.. code-block:: python
+
+   from paypal_checkout.payments import refund_capture, void_authorization
+
+   refund = refund_capture(client, capture)                        # full
+   refund = refund_capture(client, capture, amount=Decimal("4.00"),
+                           note_to_payer="partial return")         # partial
+
+   void_authorization(client, authorization)   # release a hold, take nothing
+
+A refund is refused **locally** when it would take the capture past what was
+captured, counting refunds whose outcome is not known yet — PayPal would refuse
+it too, but only after the fact, by which time the local row would claim money
+was returned that never was:
+
+.. code-block:: python
+
+   capture.refunded_amount          # completed refunds only
+   capture.reserved_refund_amount   # + pending and unknown-outcome ones
+   capture.refundable_amount        # what is still available
+
+A completed refund sets the capture to ``REFUNDED`` or ``PARTIALLY_REFUNDED`` and
+sends ``payment_refunded`` with a ``refund`` kwarg.
+
+Reconciling
+-----------
+
+An operation interrupted mid-call leaves a row with no PayPal id, so it cannot be
+looked up directly — but the *order* knows about it:
+
+.. code-block:: bash
+
+   python manage.py paypal_sync --unconfirmed
+   python manage.py paypal_sync --order 5O190127TN364715T --dry-run
+
+Each order is re-read from PayPal and an unconfirmed local attempt is matched to
+what PayPal reports, signals included. Matching is deliberately conservative:
+only when there is exactly one unconfirmed attempt and one unmatched PayPal
+capture. Anything more ambiguous is reported for a person to resolve — guessing
+which of two attempts became which capture is not something to do silently with
+money.
+
 Errors
 ------
 

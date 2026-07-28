@@ -74,12 +74,15 @@ class PayPalConfig:
     #: Set to 0 in tests to keep them fast.
     retry_backoff: float = 0.5
 
-    #: Turn the "mutating request without an idempotency key" warning into a
-    #: hard error. Meant for dev/CI/staging, so a missing ``request_id`` is
-    #: found by a test rather than by a PayPal blip in production. Off by
-    #: default: refusing to even attempt a capture is worse than attempting it
-    #: once, and a single attempt is always safe.
-    strict_idempotency: bool = False
+    #: Refuse a mutating request that carries no idempotency key, instead of
+    #: only warning about it. **On by default**: every money-moving helper in
+    #: this library supplies a persisted key, and operations that genuinely need
+    #: no key declare :class:`~paypal_checkout.client.Idempotency.NOT_APPLICABLE`,
+    #: so tripping this means a call site really has not decided how its
+    #: operation is identified. Turn it off only as a temporary, *alerted*
+    #: measure — the warning it falls back to is a migration aid, not a resting
+    #: state.
+    strict_idempotency: bool = True
 
     #: ``"offline"`` verifies webhook signatures locally (needs the ``crypto``
     #: extra); ``"api"`` asks PayPal. There is no automatic fallback: a failed

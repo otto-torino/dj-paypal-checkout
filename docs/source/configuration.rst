@@ -39,8 +39,8 @@ CURRENCY             ``"EUR"``      Default currency, 3-letter ISO-4217 code.
 TIMEOUT              ``30.0``       Per-request timeout in seconds.
 MAX_RETRIES          ``2``          Extra attempts for requests safe to repeat.
 RETRY_BACKOFF        ``0.5``        Base of the exponential backoff, in seconds.
-STRICT_IDEMPOTENCY   ``False``      Raise instead of warning on a write with no
-                                    ``request_id`` (see below).
+STRICT_IDEMPOTENCY   ``True``       Refuse a write with no ``request_id``
+                                    instead of only warning (see below).
 WEBHOOK_VERIFY_MODE  ``"offline"``  Verify signatures locally, or ``"api"`` to
                                     ask PayPal. See :doc:`webhooks`.
 CACHE_ALIAS          ``"default"``  Django cache alias storing access tokens.
@@ -69,43 +69,32 @@ code path that can pick the wrong environment:
 Strict idempotency
 ------------------
 
-A mutating request sent without ``request_id`` cannot be retried safely. By
-default the client reports it and carries on with a single attempt; turning
-``STRICT_IDEMPOTENCY`` on promotes the report to a
-:class:`~paypal_checkout.exceptions.PayPalIdempotencyError`, raised *before*
-anything reaches PayPal — not even the token request.
+A mutating request sent without ``request_id`` cannot be retried safely, so by
+default it is **refused**: the client raises
+:class:`~paypal_checkout.exceptions.PayPalIdempotencyError` *before* anything
+reaches PayPal, not even the token request.
 
-**The target is strict on in every environment, production included.** Running
-strict in CI but not in production would mean a green test suite validating a
-guarantee production does not have — the divergence is the bug, not the
-protection. So:
+You should not have to think about this. Every helper in
+:mod:`paypal_checkout.orders` and :mod:`paypal_checkout.payments` supplies a
+persisted key, and operations that genuinely need none — like verifying a webhook
+signature — declare
+:attr:`Idempotency.NOT_APPLICABLE <paypal_checkout.client.Idempotency>`. Strict
+mode therefore only trips when a call site using the raw client has not decided
+how its operation is identified. That per-operation policy is also what keeps it
+from becoming a false-positive factory in production; see :doc:`usage`.
+
+Turning it off downgrades the refusal to a structured warning:
 
 .. code-block:: python
 
-   # settings/base.py — same value everywhere
-   PAYPAL = {..., "STRICT_IDEMPOTENCY": True}
+   PAYPAL = {..., "STRICT_IDEMPOTENCY": False}   # temporary, and alert on it
 
-The recommended sequence to get there:
+Treat that as a migration aid, not a resting state, and keep the value **the same
+in every environment**. Strict in CI but lenient in production would mean a green
+test suite validating a guarantee production does not have — that divergence is
+itself the bug.
 
-1. **Warning on, everywhere** — this is the default, and it is a *migration
-   phase*, not the intended end state.
-2. **Strict in tests and CI from day one**, so a call site that forgets its
-   ``request_id`` fails a test.
-3. **Strict in production** as soon as every call path supplies a persisted id
-   (which the order/payment helpers will do for you — M2).
-4. **Turning it off is a temporary, observable measure**, never a resting state:
-   if you have to, alert on the warnings below so the exception is visible.
-
-The default is ``False`` only because those helpers do not exist yet; it will
-flip to ``True`` before 0.1.0.
-
-Strict mode is safe to run in production because a policy can be declared per
-operation: a side-effect-free POST marked
-:attr:`Idempotency.NOT_APPLICABLE <paypal_checkout.client.Idempotency>` is never
-flagged, so the guarantee does not turn into a false-positive factory. See
-:doc:`usage`.
-
-Both the warning and the error are silent when ``MAX_RETRIES`` is ``0`` — with
+Both the refusal and the warning are silent when ``MAX_RETRIES`` is ``0`` — with
 retries disabled there is no retry for a missing key to make unsafe.
 
 Observability

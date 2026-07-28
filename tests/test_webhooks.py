@@ -10,7 +10,13 @@ from django.utils import timezone
 from django.test import TestCase, TransactionTestCase, override_settings
 
 from paypal_checkout.exceptions import PayPalWebhookNotReady
-from paypal_checkout.models import Authorization, Capture, PayPalOrder, WebhookEvent
+from paypal_checkout.models import (
+    Authorization,
+    Capture,
+    PayPalOrder,
+    Refund,
+    WebhookEvent,
+)
 from paypal_checkout.signals import payment_captured, payment_denied, payment_refunded
 from paypal_checkout.webhooks.views import ProcessWebhookView
 from paypal_checkout.webhooks.handlers import (
@@ -28,6 +34,7 @@ from .test_app.models import ShopOrder
 ORDER_ID = "5O190127TN364715T"
 CAPTURE_ID = "3C679366HH908993F"
 AUTH_ID = "0VF52814937998046"
+REFUND_ID = "1JU08902781691411"
 
 WEBHOOK_SETTINGS = {
     "CLIENT_ID": "test-client-id",
@@ -58,6 +65,18 @@ def event_payload(
         "summary": "test event",
         "create_time": create_time,
         "resource": resource,
+    }
+
+
+def refund_resource(*, refund_id=None, value="10.00", status="COMPLETED"):
+    """A PAYMENT.CAPTURE.REFUNDED resource: the *refund*, not the capture."""
+    return {
+        "id": refund_id or REFUND_ID,
+        "status": status,
+        "amount": {"currency_code": "EUR", "value": value},
+        "supplementary_data": {
+            "related_ids": {"order_id": ORDER_ID, "capture_id": CAPTURE_ID}
+        },
     }
 
 
@@ -166,17 +185,131 @@ class CaptureHandlerTests(OrderFixtureMixin, TestCase):
         self.assertEqual(captured, [])
         self.assertEqual(denied, [])
 
-    def test_refunded_sends_payment_refunded(self):
+    def test_refunded_adopts_the_refund_and_signals(self):
+        """The resource of this event is the *refund*, not the capture."""
         order, capture = self.make_order()
-        resource = {"id": CAPTURE_ID, "status": "REFUNDED"}
-        event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=resource))
+        capture.update_from_payload({"id": CAPTURE_ID, "status": "COMPLETED"})
+        event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=refund_resource()))
 
         with catch_signal(payment_refunded) as received:
             dispatch(event)
 
         capture.refresh_from_db()
         self.assertEqual(capture.status, Capture.Status.REFUNDED)
+        refund = Refund.objects.get(paypal_id=REFUND_ID)
+        self.assertTrue(refund.is_successful)
+        self.assertIsNone(refund.request_id, "we did not initiate this one")
         self.assertEqual(len(received), 1)
+        self.assertEqual(received[0]["refund"], refund)
+
+    def test_a_partial_refund_marks_the_capture_partially_refunded(self):
+        order, capture = self.make_order()
+        capture.update_from_payload({"id": CAPTURE_ID, "status": "COMPLETED"})
+        event = store_event(
+            event_payload("PAYMENT.CAPTURE.REFUNDED", resource=refund_resource(value="4.00"))
+        )
+
+        dispatch(event)
+
+        capture.refresh_from_db()
+        self.assertEqual(capture.status, Capture.Status.PARTIALLY_REFUNDED)
+        self.assertEqual(capture.refunded_amount, Decimal("4.00"))
+
+    def test_a_refund_we_initiated_is_updated_not_duplicated(self):
+        order, capture = self.make_order()
+        capture.update_from_payload({"id": CAPTURE_ID, "status": "COMPLETED"})
+        refund = capture.start_refund()
+        refund.update_from_payload({"id": REFUND_ID, "status": "PENDING"})
+        event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=refund_resource()))
+
+        dispatch(event)
+
+        refund.refresh_from_db()
+        self.assertTrue(refund.is_successful)
+        self.assertEqual(capture.refunds.count(), 1)
+        self.assertIsNotNone(refund.request_id, "ours keeps its key")
+
+    def test_the_capture_can_be_found_through_the_up_link(self):
+        """Older payloads may not carry related_ids."""
+        order, capture = self.make_order()
+        capture.update_from_payload({"id": CAPTURE_ID, "status": "COMPLETED"})
+        resource = refund_resource()
+        del resource["supplementary_data"]
+        resource["links"] = [
+            {"rel": "self", "href": f"https://api.paypal.com/v2/payments/refunds/{REFUND_ID}"},
+            {"rel": "up", "href": f"https://api.paypal.com/v2/payments/captures/{CAPTURE_ID}/"},
+        ]
+        event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=resource))
+
+        dispatch(event)
+
+        self.assertTrue(Refund.objects.get(paypal_id=REFUND_ID).is_successful)
+
+    def test_links_without_a_capture_url_are_skipped(self):
+        order, capture = self.make_order()
+        resource = refund_resource()
+        del resource["supplementary_data"]
+        resource["links"] = [
+            {"rel": "self", "href": "https://api.paypal.com/v2/payments/refunds/X"},
+            "not-a-dict",
+            {"rel": "up", "href": "https://api.paypal.com/v2/checkout/orders/Y"},
+        ]
+        event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=resource))
+
+        with catch_signal(payment_refunded) as received:
+            dispatch(event)
+
+        self.assertEqual(received, [], "no capture could be identified")
+        self.assertEqual(Refund.objects.count(), 0)
+
+    def test_a_refund_amount_that_is_not_an_object_falls_back(self):
+        order, capture = self.make_order()
+        resource = refund_resource()
+        resource["amount"] = "10.00"
+        event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=resource))
+
+        dispatch(event)
+
+        self.assertEqual(Refund.objects.get(paypal_id=REFUND_ID).amount, capture.amount)
+
+    def test_an_unreadable_refund_amount_falls_back_to_the_capture(self):
+        order, capture = self.make_order()
+        resource = refund_resource()
+        resource["amount"] = {"currency_code": "EUR", "value": "not-a-number"}
+        event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=resource))
+
+        with self.assertLogs("paypal_checkout.webhooks.handlers", level="WARNING"):
+            dispatch(event)
+
+        self.assertEqual(Refund.objects.get(paypal_id=REFUND_ID).amount, capture.amount)
+
+    def test_a_refund_without_an_id_is_not_adopted(self):
+        order, capture = self.make_order()
+        resource = refund_resource()
+        del resource["id"]
+        event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=resource))
+
+        with catch_signal(payment_refunded) as received:
+            dispatch(event)
+
+        self.assertEqual(Refund.objects.count(), 0)
+        self.assertIsNone(received[0]["refund"])
+
+    def test_a_foreign_refund_is_ignored(self):
+        event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=refund_resource()))
+
+        with catch_signal(payment_refunded) as received:
+            dispatch(event)
+
+        self.assertEqual(received, [])
+        self.assertEqual(Refund.objects.count(), 0)
+
+    def test_a_refund_of_a_known_order_asks_for_a_retry(self):
+        self.make_order(with_capture=False)
+        event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=refund_resource()))
+
+        with self.assertRaises(PayPalWebhookNotReady):
+            dispatch(event)
 
     def test_processing_the_same_event_twice_is_harmless(self):
         """Handlers have to be idempotent: PayPal retries."""

@@ -12,8 +12,9 @@ of "this is ours, but the row is not here yet".
 
 import logging
 
-from ..exceptions import PayPalWebhookNotReady
-from ..models import Authorization, Capture, PayPalOrder
+from ..exceptions import PayPalAmountError, PayPalWebhookNotReady
+from ..models import Authorization, Capture, PayPalOrder, Refund
+from ..money import parse_amount_payload
 from ..signals import payment_captured, payment_denied, payment_refunded
 
 __all__ = [
@@ -79,10 +80,20 @@ def dispatch(event):
     return len(handlers)
 
 
-def _related_order_id(resource):
-    """The order id PayPal nests in a capture/authorization resource."""
+def _related_ids(resource):
+    """The ids PayPal nests in a capture/refund/authorization resource."""
     related = (resource.get("supplementary_data") or {}).get("related_ids") or {}
-    return related.get("order_id")
+    return related if isinstance(related, dict) else {}
+
+
+def _related_order_id(resource):
+    return _related_ids(resource).get("order_id")
+
+
+def _is_ours_but_missing(resource):
+    """True when the resource belongs to an order we own but the row is absent."""
+    order_id = _related_order_id(resource)
+    return bool(order_id) and PayPalOrder.objects.filter(paypal_id=order_id).exists()
 
 
 def _find_capture(event):
@@ -104,11 +115,10 @@ def _find_capture(event):
     if capture is not None:
         return capture
 
-    order_id = _related_order_id(resource)
-    if order_id and PayPalOrder.objects.filter(paypal_id=order_id).exists():
+    if _is_ours_but_missing(resource):
         raise PayPalWebhookNotReady(
-            f"capture {paypal_id} belongs to order {order_id}, which we know, but the "
-            "capture row is not stored yet — retry."
+            f"capture {paypal_id} belongs to order {_related_order_id(resource)}, "
+            "which we know, but the capture row is not stored yet — retry."
         )
     logger.info("capture %s is not ours, ignoring %s", paypal_id, event.event_id)
     return None
@@ -146,13 +156,80 @@ def handle_capture_pending(event):
 
 @register_handler("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.CAPTURE.REVERSED")
 def handle_capture_refunded(event):
-    capture = _find_capture(event)
-    if capture is None:
-        return
-    capture.update_from_payload(event.resource)
-    payment_refunded.send(
-        sender=Capture, capture=capture, order=capture.order, target=capture.order.target
+    """For these events the resource is the **refund**, not the capture.
+
+    So the capture is found through ``related_ids.capture_id``, and a refund we
+    have never seen is adopted rather than dropped — that is how a refund issued
+    straight from the PayPal dashboard ends up in the local records.
+    """
+    resource = event.resource
+    refund_id = resource.get("id")
+    related = _related_ids(resource)
+    capture_id = related.get("capture_id")
+
+    capture_id = capture_id or _capture_id_from_links(resource)
+    capture = (
+        Capture.objects.filter(paypal_id=capture_id).first() if capture_id else None
     )
+    if capture is None:
+        if _is_ours_but_missing(resource):
+            raise PayPalWebhookNotReady(
+                f"refund {refund_id} belongs to order {_related_order_id(resource)}, "
+                "which we know, but its capture row is not stored yet — retry."
+            )
+        logger.info("refund %s is not ours, ignoring %s", refund_id, event.event_id)
+        return
+
+    refund = _adopt_refund(capture, resource)
+    capture.sync_refund_status()
+    payment_refunded.send(
+        sender=Capture,
+        capture=capture,
+        order=capture.order,
+        target=capture.order.target,
+        refund=refund,
+    )
+
+
+def _capture_id_from_links(resource):
+    """Fall back to the ``up`` link, which points at the refunded capture."""
+    for link in resource.get("links") or []:
+        if not isinstance(link, dict) or link.get("rel") != "up":
+            continue
+        href = (link.get("href") or "").rstrip("/")
+        if "/captures/" in href:
+            return href.rsplit("/", 1)[-1]
+    return None
+
+
+def _adopt_refund(capture, resource):
+    """Find or create the local refund row this event describes."""
+    refund_id = resource.get("id")
+    if not refund_id:
+        return None
+    refund = Refund.objects.filter(paypal_id=refund_id).first()
+    if refund is not None:
+        return refund.update_from_payload(resource)
+
+    amount = capture.amount
+    currency = capture.currency
+    payload_amount = resource.get("amount")
+    if isinstance(payload_amount, dict):
+        try:
+            amount, currency = parse_amount_payload(payload_amount)
+        except PayPalAmountError:
+            logger.warning(
+                "refund %s has an unreadable amount; recording the capture's",
+                refund_id,
+            )
+    # No request_id: we did not initiate this one (a dashboard refund, say).
+    refund = capture.refunds.create(
+        paypal_id=refund_id,
+        status=Refund.Status.INITIATED,
+        amount=amount,
+        currency=currency,
+    )
+    return refund.update_from_payload(resource)
 
 
 @register_handler("CHECKOUT.ORDER.APPROVED", "CHECKOUT.ORDER.COMPLETED")

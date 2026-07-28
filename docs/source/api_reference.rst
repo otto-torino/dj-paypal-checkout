@@ -43,6 +43,13 @@ Orders
    :members:
    :member-order: bysource
 
+Payments
+--------
+
+.. automodule:: paypal_checkout.payments
+   :members:
+   :member-order: bysource
+
 Models
 ------
 

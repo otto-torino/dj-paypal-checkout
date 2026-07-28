@@ -15,13 +15,15 @@ Both models carry a generic FK to the host project's own object, so an order can
 be traced back to a cart, an invoice, a subscription row, whatever it is.
 """
 
+from decimal import Decimal
+
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import models, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-__all__ = ["PayPalOrder", "Authorization", "Capture", "WebhookEvent"]
+__all__ = ["PayPalOrder", "Authorization", "Capture", "Refund", "WebhookEvent"]
 
 
 def order_request_id(order_pk):
@@ -46,6 +48,30 @@ def authorization_request_id(order_pk, authorization_pk):
     and a fixed key would make PayPal replay that denial for ever.
     """
     return f"order:{order_pk}:authorize:{authorization_pk}"
+
+
+def refund_request_id(order_pk, refund_pk):
+    """Idempotency key for one refund.
+
+    Keyed on the refund row, so several partial refunds of the same capture are
+    distinct operations — a key fixed per capture would make the second partial
+    refund replay the first.
+    """
+    return f"order:{order_pk}:refund:{refund_pk}"
+
+
+def void_request_id(order_pk, authorization_pk):
+    """Idempotency key for voiding an authorization.
+
+    The one key in this library that is *not* per attempt, and deliberately so:
+    voiding is single-shot — there is no such thing as a legitimate second void
+    of the same authorization — so the authorization row itself identifies the
+    operation. It is also the one key not stored on a row: a future change to the
+    naming scheme could only make a retry look new to PayPal, and since voiding
+    an already-voided authorization is refused rather than repeated, that cannot
+    move money. Contrast :func:`capture_request_id`, where both properties matter.
+    """
+    return f"order:{order_pk}:void:{authorization_pk}"
 
 
 class PendingAttemptMixin(models.Model):
@@ -392,6 +418,77 @@ class Capture(PendingAttemptMixin):
     def is_successful(self):
         return self.status == self.Status.COMPLETED
 
+    @property
+    def refunded_amount(self):
+        """How much has actually been refunded (completed refunds only)."""
+        return self._refund_total(Refund.Status.COMPLETED)
+
+    @property
+    def reserved_refund_amount(self):
+        """Refunded, in flight, *or* of unknown outcome.
+
+        The conservative figure: an ``INITIATED`` refund may well have reached
+        PayPal, so it has to count against what is still refundable.
+        """
+        return self._refund_total(
+            Refund.Status.COMPLETED, Refund.Status.PENDING, Refund.Status.INITIATED
+        )
+
+    @property
+    def refundable_amount(self):
+        return self.amount - self.reserved_refund_amount
+
+    def _refund_total(self, *statuses):
+        total = self.refunds.filter(status__in=statuses).aggregate(
+            total=models.Sum("amount")
+        )["total"]
+        return total if total is not None else Decimal("0.00")
+
+    def pending_refund(self):
+        """A refund started but never confirmed, if any."""
+        return self.refunds.filter(status=Refund.Status.INITIATED).order_by("pk").first()
+
+    def start_refund(self, *, amount=None, note_to_payer="", invoice_id=""):
+        """Persist a refund attempt and return it, key included.
+
+        Like captures, an unconfirmed attempt is reused rather than duplicated:
+        its outcome is unknown, so a retry must carry the same key.
+        """
+        pending = self.pending_refund()
+        if pending is not None:
+            return pending
+        with transaction.atomic():
+            refund = self.refunds.create(
+                status=Refund.Status.INITIATED,
+                amount=self.amount if amount is None else amount,
+                currency=self.currency,
+                note_to_payer=note_to_payer or "",
+                invoice_id=invoice_id or "",
+            )
+            refund.request_id = refund_request_id(self.order_id, refund.pk)
+            refund.save(update_fields=["request_id", "updated_at"])
+        return refund
+
+    def sync_refund_status(self, *, save=True):
+        """Reflect completed refunds in the capture's own status.
+
+        PayPal says the same thing through ``PAYMENT.CAPTURE.REFUNDED``; this
+        keeps the row honest between the refund call and that webhook.
+        """
+        refunded = self.refunded_amount
+        if not refunded:
+            return self
+        status = (
+            self.Status.REFUNDED
+            if refunded >= self.amount
+            else self.Status.PARTIALLY_REFUNDED
+        )
+        if status != self.status:
+            self.status = status
+            if save:
+                self.save(update_fields=["status", "updated_at"])
+        return self
+
     def update_from_payload(self, payload, *, save=True):
         """Merge a PayPal capture payload into this row."""
         paypal_id = payload.get("id")
@@ -468,4 +565,54 @@ class WebhookEvent(models.Model):
         self.processed_at = None
         self.last_error = str(error)[:2000]
         self.save(update_fields=["processed_at", "last_error"])
+        return self
+
+
+class Refund(PendingAttemptMixin):
+    """One refund of a :class:`Capture`, full or partial."""
+
+    class Status(models.TextChoices):
+        #: Local-only: the row exists, the outcome is not known yet.
+        INITIATED = "INITIATED", "Initiated locally"
+        COMPLETED = "COMPLETED", "Completed"
+        PENDING = "PENDING", "Pending"
+        CANCELLED = "CANCELLED", "Cancelled"
+        FAILED = "FAILED", "Failed"
+
+    capture = models.ForeignKey(
+        Capture, related_name="refunds", on_delete=models.CASCADE
+    )
+    paypal_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    request_id = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    status = models.CharField(max_length=24, choices=Status, default=Status.INITIATED)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    note_to_payer = models.CharField(max_length=255, blank=True)
+    invoice_id = models.CharField(max_length=127, blank=True)
+    raw = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [models.Index(fields=("status",))]
+
+    def __str__(self):
+        return self.paypal_id or f"{self.get_status_display()} #{self.pk}"
+
+    @property
+    def is_successful(self):
+        return self.status == self.Status.COMPLETED
+
+    def update_from_payload(self, payload, *, save=True):
+        """Merge a PayPal refund payload into this row."""
+        paypal_id = payload.get("id")
+        if paypal_id:
+            self.paypal_id = paypal_id
+        status = payload.get("status")
+        if status in self.Status.values:
+            self.status = status
+        self.raw = payload
+        if save:
+            self.save(update_fields=["paypal_id", "status", "raw", "updated_at"])
         return self

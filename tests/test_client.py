@@ -248,7 +248,16 @@ class IdempotencyDiagnosticsTests(SimpleTestCase):
         with PayPalClient(config, transport=fake.transport) as client:
             self.assertEqual(client.get(ORDERS), {"ok": True})
 
-    def test_strict_mode_is_off_by_default(self):
+    def test_strict_mode_is_on_by_default(self):
+        """``make_config`` forces it off; the library ships with it on."""
+        from django.test import override_settings
+
+        from paypal_checkout.config import get_config
+
+        with override_settings(
+            PAYPAL={"CLIENT_ID": "id", "CLIENT_SECRET": "secret"}
+        ):
+            self.assertTrue(get_config().strict_idempotency)
         self.assertFalse(make_config().strict_idempotency)
 
 

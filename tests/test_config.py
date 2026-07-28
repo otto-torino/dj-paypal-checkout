@@ -108,7 +108,12 @@ class GetConfigTests(SimpleTestCase):
         self.assertIs(config.strict_idempotency, True)
 
     @override_settings(PAYPAL=MINIMAL)
-    def test_strict_idempotency_is_off_by_default(self):
+    def test_strict_idempotency_is_on_by_default(self):
+        """The shipped posture: a write with no key is refused, not warned about."""
+        self.assertIs(get_config().strict_idempotency, True)
+
+    @override_settings(PAYPAL={**MINIMAL, "STRICT_IDEMPOTENCY": False})
+    def test_strict_idempotency_can_be_turned_off(self):
         self.assertIs(get_config().strict_idempotency, False)
 
     @override_settings(PAYPAL={**MINIMAL, "WEBHOOK_VERIFY_MODE": "api"})

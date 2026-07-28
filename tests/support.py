@@ -16,13 +16,20 @@ from paypal_checkout.config import PayPalConfig
 
 
 def make_config(**overrides):
-    """A config suitable for tests: dummy creds, no backoff sleeps."""
+    """A config suitable for tests: dummy creds, no backoff sleeps.
+
+    ``strict_idempotency`` is forced **off** here even though the shipped default
+    is on: most tests exercise the raw client's lenient path, where a write
+    without a key is warned about rather than refused. Tests about the default
+    itself build a config from settings instead.
+    """
     values = {
         "client_id": "test-client-id",
         "client_secret": "test-client-secret",
         "live": False,
         "retry_backoff": 0,
         "max_retries": 2,
+        "strict_idempotency": False,
     }
     values.update(overrides)
     return PayPalConfig(**values)
