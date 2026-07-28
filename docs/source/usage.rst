@@ -55,9 +55,29 @@ treats it as the deciding factor:
 * ``POST``/``PATCH`` **without** ``request_id`` — **never** retried. A repeated
   capture could charge the buyer twice, so the error is raised instead.
 
-Pass a value that is stable for the operation — derive it from your own order
-id, not from ``uuid4()`` — otherwise the retry looks like a new request to
-PayPal and the protection is lost.
+The value must be **stable for the same operation** and **different for
+different operations**, and it should be persisted before the call so that a
+retry after a crash or a re-run job reuses it instead of minting a new one:
+
+.. code-block:: text
+
+   order:<pk>:authorize
+   order:<pk>:capture:<capture-attempt>
+   order:<pk>:refund:<refund-pk>
+
+Two mistakes to avoid:
+
+* a fresh ``uuid4()`` per attempt — PayPal sees a new request, and the
+  protection is gone;
+* a *fixed* string such as ``capture-<order_pk>`` — it would block a legitimate
+  second attempt after a decline, because PayPal would replay the response of
+  the first one. Hence the attempt counter above.
+
+Note the two different layers. Retries *within* a single call already reuse one
+id, including the replay after a ``401``. Recovering *across* a crash, a
+restart or a re-run job is what needs a persistent, deterministic id from your
+application — which is why the higher-level order/payment helpers will own it
+rather than leaving it to the caller.
 
 Errors
 ------

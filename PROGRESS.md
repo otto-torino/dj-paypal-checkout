@@ -165,9 +165,14 @@ The first release is the bump to `0.1.0` on `main`.
       that header — otherwise a retried capture could charge twice. Same rule
       applies to connection errors, since the request may have reached PayPal.
       A 401 replay is exempt: nothing happened server-side.
-- [x] Tests: 101 total, **100% coverage incl. branches**. All HTTP goes through
+- [x] Tests: 108 total, **100% coverage incl. branches**. All HTTP goes through
       an `httpx.MockTransport` (`tests/support.py::FakePayPal`) — no live or
       sandbox calls anywhere.
+- [x] 401 contract pinned by explicit tests (added after review): the replay
+      reuses the **same** `request_id` *and* body, the refresh happens exactly
+      once, a replay that then fails with 5xx or a connection error is **not**
+      retried further, and the replay does **not** consume the `max_retries`
+      budget (1 attempt + 1 replay + 2 retries = 4 calls, verified).
 - [x] Docs: `configuration.rst` and `usage.rst` now document the real API
       (settings reference, retry rules, error handling); `api_reference.rst`
       autodocs config/client/auth/exceptions.
@@ -181,7 +186,38 @@ Deliberately deferred to M2 (not oversights): amount/currency formatting
 M1 stops at the transport layer.
 
 ### M2 — one-off payments (Orders v2)
-- [ ] create / show / capture / authorize, `PayPal-Request-Id`
+
+**Idempotency contract (decided with Elisa, 2026-07-28).** The economic
+invariant lives in the wrappers, not in the low-level client — which stays
+deliberately *sharp*. Requirements:
+
+- A `PayPal-Request-Id` must be **stable for the same operation** and
+  **different for different operations**. Scheme:
+  `order:<pk>:authorize`, `order:<pk>:capture:<capture-attempt>`,
+  `order:<pk>:refund:<refund-pk>`.
+- ⚠️ A fixed `capture-<order_pk>` is *wrong*: it would block a legitimate
+  second attempt after a decline, because PayPal would replay the first
+  response. Hence the attempt counter in the key.
+- The id must be **persisted before the call** (a row/field written first), so
+  it survives a crash and the retry reuses it instead of minting a new one.
+- Two distinct layers, do not conflate:
+  - *within one call* — retries of the same attempt must reuse one id
+    (`client.py` already guarantees this; the 401 replay reuses it too, covered
+    by tests);
+  - *across crashes, restarts and re-run jobs* — needs the persistent,
+    deterministic id from the application layer. A per-call UUID cannot help
+    here, which is exactly why the wrappers own it.
+- **Decided**: the low-level client never auto-generates a `request_id`. A write
+  without one is simply not retried. Auto-generating would make
+  `_is_safe_to_retry` always true for writes, silently removing the "the caller
+  has thought about idempotency" signal — and it would not help across a crash
+  anyway. Accepted cost: transient PayPal blips on a bare `client.post()` turn
+  into manual reconciliation. The wrappers are what remove that cost, by always
+  supplying a persisted id.
+
+Work items:
+- [ ] create / show / capture / authorize, with the `request_id` scheme above
+      generated and persisted by the wrapper, never by the caller
 - [ ] `PayPalOrder`, `Capture` models (+ generic FK to the host order) + signals; admin
 - [ ] template tag for the JS SDK v6 script + button container
 - [ ] `example/` demo: cart → button → capture → order marked paid

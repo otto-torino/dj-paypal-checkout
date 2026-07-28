@@ -339,6 +339,75 @@ class TokenRefreshTests(SimpleTestCase):
         with PayPalClient(make_config(), transport=fake.transport) as client:
             self.assertEqual(client.post(ORDERS, json={}), {"id": "5O1"})
 
+    def test_replay_reuses_the_same_request_id_and_body(self):
+        """The replay must be the *same* request, or it could charge twice."""
+        fake = FakePayPal().queue(
+            ORDERS,
+            httpx.Response(401, json={"name": "NOT_AUTHORIZED"}),
+            httpx.Response(201, json={"id": "5O1"}),
+        )
+        with PayPalClient(make_config(), transport=fake.transport) as client:
+            client.post(ORDERS, json={"intent": "CAPTURE"}, request_id="order:42:capture:1")
+
+        requests = fake.api_requests()
+        self.assertEqual(
+            [r.headers["paypal-request-id"] for r in requests],
+            ["order:42:capture:1", "order:42:capture:1"],
+        )
+        self.assertEqual(requests[0].content, requests[1].content)
+
+    def test_write_that_401s_twice_refreshes_only_once(self):
+        fake = FakePayPal().queue(
+            ORDERS,
+            httpx.Response(401, json={"name": "NOT_AUTHORIZED"}),
+            httpx.Response(401, json={"name": "NOT_AUTHORIZED"}),
+        )
+        with PayPalClient(make_config(), transport=fake.transport) as client:
+            with self.assertRaises(PayPalAuthenticationError):
+                client.post(ORDERS, json={}, request_id="order:42:capture:1")
+
+        self.assertEqual(len(fake.api_requests()), 2, "one attempt + one replay, no more")
+        self.assertEqual(len(fake.token_requests), 2, "exactly one refresh")
+
+    def test_replay_failing_with_5xx_is_not_retried_further(self):
+        """The 401 exemption must not hand an unsafe write a free retry."""
+        fake = FakePayPal().queue(
+            ORDERS,
+            httpx.Response(401, json={"name": "NOT_AUTHORIZED"}),
+            httpx.Response(500, json={"name": "INTERNAL_SERVER_ERROR"}),
+        )
+        with PayPalClient(make_config(max_retries=2), transport=fake.transport) as client:
+            with self.assertRaises(PayPalServerError):
+                client.post(ORDERS, json={})
+
+        self.assertEqual(len(fake.api_requests()), 2)
+
+    def test_replay_failing_transport_is_not_retried_further(self):
+        fake = FakePayPal().queue(
+            ORDERS,
+            httpx.Response(401, json={"name": "NOT_AUTHORIZED"}),
+            httpx.ConnectError("reset"),
+        )
+        with PayPalClient(make_config(max_retries=2), transport=fake.transport) as client:
+            with self.assertRaises(PayPalConnectionError):
+                client.post(ORDERS, json={})
+
+        self.assertEqual(len(fake.api_requests()), 2)
+
+    def test_refresh_budget_is_separate_from_the_retry_budget(self):
+        """A 401 replay must not consume one of the max_retries attempts."""
+        fake = FakePayPal().queue(
+            ORDERS,
+            httpx.Response(401, json={"name": "NOT_AUTHORIZED"}),
+            httpx.Response(503, json={"name": "SERVICE_UNAVAILABLE"}),
+            httpx.Response(503, json={"name": "SERVICE_UNAVAILABLE"}),
+            httpx.Response(200, json={"ok": True}),
+        )
+        with PayPalClient(make_config(max_retries=2), transport=fake.transport) as client:
+            self.assertEqual(client.get(ORDERS), {"ok": True})
+
+        self.assertEqual(len(fake.api_requests()), 4, "1 attempt + 1 replay + 2 retries")
+
 
 class AsyncClientTests(SimpleTestCase):
     """The async client must behave identically to the sync one."""
@@ -397,6 +466,32 @@ class AsyncClientTests(SimpleTestCase):
             self.assertEqual(await client.delete(ORDERS), {})
 
         self.assertEqual([r.method for r in fake.api_requests()], ["PATCH", "DELETE"])
+
+    async def test_replay_reuses_the_same_request_id(self):
+        fake = FakePayPal().queue(
+            ORDERS,
+            httpx.Response(401, json={"name": "NOT_AUTHORIZED"}),
+            httpx.Response(201, json={"id": "5O1"}),
+        )
+        async with AsyncPayPalClient(make_config(), transport=fake.transport) as client:
+            await client.post(ORDERS, json={}, request_id="order:42:capture:1")
+
+        self.assertEqual(
+            [r.headers["paypal-request-id"] for r in fake.api_requests()],
+            ["order:42:capture:1", "order:42:capture:1"],
+        )
+
+    async def test_replay_failing_with_5xx_is_not_retried_further(self):
+        fake = FakePayPal().queue(
+            ORDERS,
+            httpx.Response(401, json={"name": "NOT_AUTHORIZED"}),
+            httpx.Response(500, json={"name": "INTERNAL_SERVER_ERROR"}),
+        )
+        async with AsyncPayPalClient(make_config(max_retries=2), transport=fake.transport) as client:
+            with self.assertRaises(PayPalServerError):
+                await client.post(ORDERS, json={})
+
+        self.assertEqual(len(fake.api_requests()), 2)
 
     async def test_validation_error_is_raised(self):
         fake = FakePayPal().queue(
