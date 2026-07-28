@@ -540,9 +540,13 @@ Still open, but none of them block M0/M1:
       tested against real RSA signatures.
 - [x] **M4 done** (2026-07-28): refunds, voids, reconciliation command, strict
       default flipped. 418 tests, 100% coverage.
-- [ ] **0.1.0 is ready to cut but NOT cut.** Everything in M0–M4 is done and
-      verified; bumping `version` in `pyproject.toml` on `main` *is* the release,
-      so it needs an explicit go-ahead.
+- [ ] **0.1.0 is ready to cut but NOT cut**, waiting on the Read the Docs import
+      (Elisa's call: docs first, so the PyPI page links to something that works).
+      Everything in M0–M4 is done and verified. When the go-ahead comes, the whole
+      release is: set `version = "0.1.0"` in `pyproject.toml` **and**
+      `__version__` in `paypal_checkout/__init__.py` (a test enforces they match),
+      commit, push `main` — then approve the `pypi` environment when GitHub asks.
+      That first publish also converts the pending publisher and reserves the name.
 
 #### Release prerequisites (2026-07-28)
 
@@ -593,15 +597,30 @@ Still open, but none of them block M0/M1:
 - [x] README badges in the house style (CI, codecov, Read the Docs, Django,
       Python, PayPal), matching `django-copier`/`django-cookiecutter`. They stay
       grey until the repo, Codecov project and RTD import exist.
-- [ ] **Read the Docs**: the config was there but nothing enforced or connected it.
-      Now `.readthedocs.yaml` sets `sphinx.fail_on_warning: true`, and CI has a
-      separate `docs` job running `sphinx-build -W --keep-going`, so a broken docs
-      build fails the pull request rather than silently degrading on RTD.
-      Still manual, on readthedocs.org: import the repo, point it at
-      `.readthedocs.yaml` (it is auto-detected), and — if the project is private —
-      grant access. The URL is already declared in `pyproject.toml`
-      (`https://dj-paypal-checkout.readthedocs.io`), so it must match the slug
-      chosen at import time.
+- [ ] **Read the Docs import — the last prerequisite, and it is manual.**
+      Decision (Elisa, 2026-07-28): **import RTD first, release after**, so the
+      PyPI page is born with a working documentation link and the README badge is
+      valid from the start.
+
+      On readthedocs.org: *Import a Project* → `otto-torino/dj-paypal-checkout`.
+      The slug **must** be `dj-paypal-checkout`, because
+      `https://dj-paypal-checkout.readthedocs.io` is already declared in
+      `pyproject.toml` and in the README badge. `.readthedocs.yaml` is
+      auto-detected; nothing else to configure.
+
+      Our side is done and enforced: `.readthedocs.yaml` sets
+      `sphinx.fail_on_warning: true`, and CI has a separate `docs` job running
+      `sphinx-build -W --keep-going`, so a broken build fails the pull request
+      instead of silently degrading on RTD.
+
+      **The first RTD build was simulated faithfully before handing it over** —
+      fresh Python 3.12 venv, `pip install docs/requirements.txt`, **non-editable**
+      `pip install .` (as RTD does, so a docs build that only works from the
+      source tree would have shown up), Sphinx **9.1** (newer than the local venv),
+      `-W --keep-going`. Result: build succeeded, all 10 pages rendered, autodoc
+      resolved (`PayPalOrder` and `refund_capture` present in
+      `api_reference.html`), which means the Django setup in `docs/source/conf.py`
+      works in a clean environment.
 - [ ] M5 — subscriptions (products/plans catalog, subscription lifecycle).
 
 *Reminder: semantic commits, subject only, no body, no Co-Authored-By trailer.*
