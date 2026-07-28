@@ -531,11 +531,11 @@ Still open, but none of them block M0/M1:
       warnings, wheel verified (templates/templatetags/migrations packaged,
       `example/` excluded). Left in M2: `void_authorization` (moved to M4 with
       the refund work) and the `STRICT_IDEMPOTENCY` default flip (after M4).
-- [ ] Create the GitHub repo `otto-torino/dj-paypal-checkout`, set up PyPI
-      Trusted Publishing and the `CODECOV_TOKEN` secret (CI uploads coverage
-      with `fail_ci_if_error: true`, so it fails until the token exists).
+- [x] GitHub repo, CI and publishing set up — see *Release prerequisites* below.
+      (The `CODECOV_TOKEN` this line used to demand turned out to be unnecessary.)
 - [ ] Consider renaming the working directory to `dj-paypal-checkout/`
-      (currently `django-paypal/`, which no longer matches the package).
+      (currently `django-paypal/`, which no longer matches the package). Purely
+      cosmetic: git and the remote do not care.
 - [x] **M3 webhooks done** (2026-07-28). 337 tests, 100% coverage, verification
       tested against real RSA signatures.
 - [x] **M4 done** (2026-07-28): refunds, voids, reconciliation command, strict
