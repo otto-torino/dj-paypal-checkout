@@ -540,13 +540,17 @@ Still open, but none of them block M0/M1:
       tested against real RSA signatures.
 - [x] **M4 done** (2026-07-28): refunds, voids, reconciliation command, strict
       default flipped. 418 tests, 100% coverage.
-- [ ] **0.1.0 is ready to cut but NOT cut**, waiting on the Read the Docs import
-      (Elisa's call: docs first, so the PyPI page links to something that works).
-      Everything in M0–M4 is done and verified. When the go-ahead comes, the whole
-      release is: set `version = "0.1.0"` in `pyproject.toml` **and**
-      `__version__` in `paypal_checkout/__init__.py` (a test enforces they match),
-      commit, push `main` — then approve the `pypi` environment when GitHub asks.
-      That first publish also converts the pending publisher and reserves the name.
+- [x] **0.1.0 cut** (2026-07-28), after the RTD import went green — Elisa's
+      sequencing, so the PyPI page is born linking to documentation that works.
+      `version` and `__version__` both `0.1.0` (the test that pins them to each
+      other passes), `Development Status` moved from Pre-Alpha to Alpha, README
+      status rewritten — including the honest caveat that it has not yet run
+      against live PayPal traffic. Local build + `twine check` PASSED on both
+      artifacts.
+- [ ] **Awaiting Elisa's approval of the `pypi` environment** for the upload to
+      actually happen. The push only *queues* the release; that click is what
+      sends it, converts the pending publisher into a normal one, creates the
+      project and reserves the name on PyPI.
 
 #### Release prerequisites (2026-07-28)
 
@@ -635,6 +639,18 @@ Still open, but none of them block M0/M1:
       `sphinx.fail_on_warning: true`, and CI has a separate `docs` job running
       `sphinx-build -W --keep-going`, so a broken build fails the pull request
       instead of silently degrading on RTD.
+
+      ✅ **Imported and green, 2026-07-28.** Verified from outside:
+      `https://dj-paypal-checkout.readthedocs.io/` returns 200 and redirects to
+      `/en/latest/`, all six pages are served, and the badge reads *passing*. The
+      slug came out as `dj-paypal-checkout`, so the URL in `pyproject.toml` and the
+      README badge are both valid.
+      One trap in the wizard: it offers an example `.readthedocs.yaml` to copy.
+      Do **not** — the example points `sphinx.configuration` at `docs/conf.py`
+      (ours is `docs/source/conf.py`), leaves the requirements commented out and
+      omits `method: pip, path: .`, without which autodoc cannot import
+      `paypal_checkout` and the build fails. The right answer to that step is
+      "this file exists".
 
       **The first RTD build was simulated faithfully before handing it over** —
       fresh Python 3.12 venv, `pip install docs/requirements.txt`, **non-editable**

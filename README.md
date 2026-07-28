@@ -10,14 +10,15 @@
 A modern, REST-first PayPal integration for Django: **Orders v2** checkout,
 refunds and **verified webhooks**, with models, signals and admin.
 
-> **Status: in development — nothing released yet.**
-> Feature-complete for a 0.1.0: configuration, OAuth2 auth with token caching,
-> sync/async HTTP clients, amount handling, models with persisted idempotency
-> keys, the Orders v2 create/authorize/capture flows, refunds and voids, verified
-> webhooks, a reconciliation command, signals, a read-only admin and a runnable
-> demo. Not yet: subscriptions, Vault, Card Fields.
-> See [PROGRESS.md](PROGRESS.md). Do not use it in production; the API will
-> change until 0.1.0.
+> **Status: 0.1.0, the first release.** One-off payments are covered end to end:
+> configuration, OAuth2 auth with token caching, sync/async HTTP clients, amount
+> handling, models with persisted idempotency keys, the Orders v2
+> create/authorize/capture flows, refunds and voids, verified webhooks, a
+> reconciliation command, signals, a read-only admin and a runnable demo.
+> Not yet: subscriptions, Vault, Card Fields.
+>
+> It has not been run against live PayPal traffic yet, and the API may still
+> change on minor versions before 1.0. See [PROGRESS.md](PROGRESS.md).
 
 ## Why another PayPal library?
 
