@@ -7,6 +7,9 @@ build:
 
 sphinx:
   configuration: docs/source/conf.py
+  # The docs build clean; keep them that way rather than letting warnings pile up
+  # unnoticed on Read the Docs.
+  fail_on_warning: true
 
 python:
   install:

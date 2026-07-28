@@ -542,8 +542,41 @@ Still open, but none of them block M0/M1:
       default flipped. 418 tests, 100% coverage.
 - [ ] **0.1.0 is ready to cut but NOT cut.** Everything in M0–M4 is done and
       verified; bumping `version` in `pyproject.toml` on `main` *is* the release,
-      so it needs an explicit go-ahead. Before it: create
-      `otto-torino/dj-paypal-checkout`, PyPI Trusted Publishing, `CODECOV_TOKEN`.
+      so it needs an explicit go-ahead.
+
+#### Release prerequisites (2026-07-28)
+
+- [ ] **Required**: create `otto-torino/dj-paypal-checkout`, add the remote, push
+      `main`.
+- [ ] **Required for publishing**: PyPI Trusted Publishing for
+      `dj-paypal-checkout` (the workflow uses OIDC, so there is no API token to
+      store).
+- [x] **No `CODECOV_TOKEN` at all.** I had copied `token: ${{ secrets.CODECOV_TOKEN }}`
+      from `dj-editor-js` (codecov-action v4). Elisa pointed at
+      `www/django-copier`, which uploads with **`use_oidc: true`** on
+      codecov-action **v7** — GitHub's OIDC identity authenticates the upload, so
+      there is no secret to store or rotate. Adopted, together with that repo's
+      SHA-pinning of actions. The job declares `id-token: write`.
+- [x] **The real coverage gate is `fail_under = 100` in `.coveragerc`**, enforced
+      by a `coverage report` step rather than by Codecov: stronger than a
+      dashboard and independent of any external service. Verified that it bites —
+      a partial run exits 2. Codecov is now purely the badge.
+- [x] Actions pinned by SHA in both workflows (`checkout` v5, `setup-python` v6,
+      `codecov-action` v7), matching `django-copier`. Exception:
+      `pypa/gh-action-pypi-publish@release/v1` stays on its release branch, which
+      is how PyPA documents it — I did not want to invent a SHA I could not verify.
+- [x] README badges in the house style (CI, codecov, Read the Docs, Django,
+      Python, PayPal), matching `django-copier`/`django-cookiecutter`. They stay
+      grey until the repo, Codecov project and RTD import exist.
+- [ ] **Read the Docs**: the config was there but nothing enforced or connected it.
+      Now `.readthedocs.yaml` sets `sphinx.fail_on_warning: true`, and CI has a
+      separate `docs` job running `sphinx-build -W --keep-going`, so a broken docs
+      build fails the pull request rather than silently degrading on RTD.
+      Still manual, on readthedocs.org: import the repo, point it at
+      `.readthedocs.yaml` (it is auto-detected), and — if the project is private —
+      grant access. The URL is already declared in `pyproject.toml`
+      (`https://dj-paypal-checkout.readthedocs.io`), so it must match the slug
+      chosen at import time.
 - [ ] M5 — subscriptions (products/plans catalog, subscription lifecycle).
 
 *Reminder: semantic commits, subject only, no body, no Co-Authored-By trailer.*

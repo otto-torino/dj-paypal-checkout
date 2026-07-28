@@ -9,6 +9,9 @@ omit =
 
 [report]
 show_missing = True
+# The suite covers every line and branch. Enforcing it here means `coverage
+# report` fails locally and in CI alike, with no external service involved.
+fail_under = 100
 exclude_lines =
     raise NotImplementedError
     pragma: no cover

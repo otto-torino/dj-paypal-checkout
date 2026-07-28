@@ -45,3 +45,4 @@ Thumbs.db
 CLAUDE.md
 .claude/
 test_db.sqlite3
+docs/_ci_build/

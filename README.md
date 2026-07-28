@@ -1,5 +1,12 @@
 # dj-paypal-checkout
 
+[![CI](https://github.com/otto-torino/dj-paypal-checkout/actions/workflows/ci.yml/badge.svg)](https://github.com/otto-torino/dj-paypal-checkout/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/otto-torino/dj-paypal-checkout/branch/main/graph/badge.svg)](https://codecov.io/gh/otto-torino/dj-paypal-checkout)
+[![Documentation](https://readthedocs.org/projects/dj-paypal-checkout/badge/?version=latest)](https://dj-paypal-checkout.readthedocs.io/)
+![Django 5.2 | 6.0](https://img.shields.io/badge/Django-5.2%20%7C%206.0-092E20?logo=django&logoColor=white)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![PayPal REST](https://img.shields.io/badge/PayPal-Orders%20v2-003087?logo=paypal&logoColor=white)
+
 A modern, REST-first PayPal integration for Django: **Orders v2** checkout,
 refunds and **verified webhooks**, with models, signals and admin.
 
@@ -67,11 +74,12 @@ export PAYPAL_CLIENT_SECRET=...
 # Run the test suite (custom runner, uses tests/test_settings.py)
 python tests/runtests.py
 
-# Coverage (what CI runs)
+# Coverage (what CI runs; fails below 100% via .coveragerc)
 coverage run tests/runtests.py && coverage report -m
 
-# Build the docs
-sphinx-build -E -b html docs/source docs/build/html
+# Docs the way CI and Read the Docs build them (warnings are errors)
+sphinx-build -W --keep-going -b html docs/source docs/build/html
+
 ```
 
 Invoke tasks are available too: `invoke test`, `invoke coverage`,
