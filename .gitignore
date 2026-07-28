@@ -1,0 +1,46 @@
+# Virtual Environment
+venv/
+env/
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Test/coverage artifacts
+.coverage
+coverage.xml
+htmlcov/
+test_media/
+
+# Django project files
+*.log
+db.sqlite3
+db.sqlite3-journal
+media/
+/staticfiles/
+
+# Docs build
+docs/build/
+docs/_build/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# IDE and editor configuration
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Claude Code
+CLAUDE.md
+.claude/

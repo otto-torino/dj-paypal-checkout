@@ -1,0 +1,5 @@
+graft paypal_checkout/templates
+graft paypal_checkout/static
+graft paypal_checkout/locale
+include LICENSE
+include README.md

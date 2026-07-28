@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=77.0.3", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dj-paypal-checkout"
+# 0.0.0 == "never released". The publish workflow deliberately skips this
+# version; bumping it to 0.1.0 on main IS the first release.
+version = "0.0.0"
+authors = [
+    { name = "Otto", email = "opensource@otto.srl" },
+]
+description = "A modern, REST-first PayPal integration for Django: Orders v2 checkout, refunds and verified webhooks."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Web Environment",
+    "Framework :: Django",
+    "Framework :: Django :: 5.2",
+    "Framework :: Django :: 6.0",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "Django >= 5.2",
+    "httpx >= 0.27",
+]
+
+[project.optional-dependencies]
+# Offline webhook signature verification needs an X.509/RSA implementation.
+# Kept optional so projects that verify via the PayPal API don't pay for it.
+crypto = [
+    "cryptography >= 42.0",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+exclude = ["example", "example.*", "tests", "tests.*", "docs", "docs.*"]
+
+[project.urls]
+Homepage = "https://github.com/otto-torino/dj-paypal-checkout"
+Repository = "https://github.com/otto-torino/dj-paypal-checkout"
+Documentation = "https://dj-paypal-checkout.readthedocs.io"
+"Bug Tracker" = "https://github.com/otto-torino/dj-paypal-checkout/issues"

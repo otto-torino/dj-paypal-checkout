@@ -1,0 +1,15 @@
+[run]
+branch = true
+source = paypal_checkout
+omit =
+    */tests/*
+    */example/*
+    */migrations/*
+    tasks.py
+
+[report]
+show_missing = True
+exclude_lines =
+    raise NotImplementedError
+    pragma: no cover
+    if TYPE_CHECKING:
