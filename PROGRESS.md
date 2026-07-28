@@ -608,6 +608,20 @@ Still open, but none of them block M0/M1:
       `pyproject.toml` and in the README badge. `.readthedocs.yaml` is
       auto-detected; nothing else to configure.
 
+      ⚠️ **The repo will not appear in the list until the Read the Docs GitHub App
+      is installed on the `otto-torino` org** — RTD only lists what its App can
+      see. Verified 2026-07-28: the org has `slack`, `travis-ci`, `stale`,
+      `codecov`, `deploy-bot-otto` installed and **no** Read the Docs app.
+      The App is **https://github.com/apps/read-the-docs-community** (for
+      readthedocs.org). Note two traps: `github.com/apps/readthedocs` is an
+      unrelated *private* App owned by someone else — I sent Elisa there first and
+      it was a dead end — and `read-the-docs-business` is the paid platform, which
+      serves docs from `.readthedocs-hosted.com` and would not match the URL we
+      have already published. Install on the **org**, not a personal account, then
+      re-sync the repository list on RTD.
+      Elisa is an org `admin`, so no owner approval is needed; the org's
+      third-party *application* policy governs OAuth apps, not GitHub Apps.
+
       Our side is done and enforced: `.readthedocs.yaml` sets
       `sphinx.fail_on_warning: true`, and CI has a separate `docs` job running
       `sphinx-build -W --keep-going`, so a broken build fails the pull request
