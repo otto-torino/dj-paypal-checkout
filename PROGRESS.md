@@ -1,13 +1,30 @@
 # Progress — modern PayPal integration library for Django
 
-Status: **greenfield / design phase**. The directory contains only an empty
-`doc.md`; no git repo, no package skeleton yet.
-Started: 2026-07-28.
+Status: **0.1.0 cut** — M0–M4 done, awaiting approval of the `pypi` environment
+for the upload to happen. Started and brought here on 2026-07-28.
+
+- Repo: https://github.com/otto-torino/dj-paypal-checkout (public)
+- Docs: https://dj-paypal-checkout.readthedocs.io (live, badge *passing*)
+- PyPI: `dj-paypal-checkout` — **not published yet**; the name is only reserved
+  by the first successful upload
+- 418 tests, **100% coverage incl. branches** (enforced by `fail_under = 100`),
+  green on py3.11–3.14 across Django 5.2 and 6.0
+- Working directory is still `django-paypal/`, which no longer matches the
+  package name. Cosmetic only.
+
+Shipped: config, OAuth2 auth with token caching, sync/async clients, amounts,
+models with persisted idempotency keys, Orders v2 create/authorize/capture,
+refunds and voids, verified webhooks with an atomic claim, a reconciliation
+command, signals, read-only admin, JS SDK v6 tags, runnable demo.
+Not shipped: subscriptions (M5), Vault and Card Fields (M6).
 
 Goal: a maintained, REST-first PayPal library for Django — Orders v2 checkout,
 subscriptions, refunds and **webhooks** — replacing the IPN/PDT-era tooling.
 Packaged and released like the other Otto libraries (`dj-editor-js`,
 `django-baton`).
+
+*This file is a running log: the sections below are in milestone order and keep
+the reasoning behind each decision, including the ones that turned out wrong.*
 
 ## Why a new library (landscape checked 2026-07-28)
 
@@ -551,6 +568,18 @@ Still open, but none of them block M0/M1:
       actually happen. The push only *queues* the release; that click is what
       sends it, converts the pending publisher into a normal one, creates the
       project and reserves the name on PyPI.
+- [ ] **Fix a side effect of the environment gate, after the release.** The
+      environment gates the *whole job*, which sits in front of the version check,
+      so **every** push to `main` now queues an approval request — even the ones
+      that would immediately skip. Four such stale runs piled up and were
+      cancelled by hand; leaving them is worse than noise, because five identical
+      pending approvals invite clicking the wrong one.
+      Fix: split `publish.yml` into a `check` job with **no** environment that
+      outputs whether to publish, and a `publish` job with
+      `needs: check` + `if:` + `environment: pypi`. Then a non-release push
+      completes cleanly and only a real release waits for a human. Deliberately
+      deferred until after this release, so there is exactly one pending approval
+      to act on rather than two runs for the same version.
 
 #### Release prerequisites (2026-07-28)
 
