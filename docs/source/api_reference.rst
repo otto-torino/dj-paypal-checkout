@@ -22,6 +22,13 @@ Clients
    :undoc-members:
    :member-order: bysource
 
+Amounts
+-------
+
+.. automodule:: paypal_checkout.money
+   :members:
+   :member-order: bysource
+
 Authentication
 --------------
 

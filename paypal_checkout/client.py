@@ -12,6 +12,7 @@ uses to deduplicate. Without it, a failed POST is raised, never repeated.
 """
 
 import asyncio
+import enum
 import logging
 import random
 import re
@@ -29,9 +30,31 @@ from .exceptions import (
     retry_after_seconds,
 )
 
-__all__ = ["PayPalClient", "AsyncPayPalClient"]
+__all__ = ["PayPalClient", "AsyncPayPalClient", "Idempotency", "endpoint_label"]
 
 logger = logging.getLogger(__name__)
+
+
+class Idempotency(enum.Enum):
+    """Whether an *operation* needs an idempotency key — a property of the
+    operation, not something inferred from the HTTP verb.
+
+    "Mutating method ⇒ needs a key" is only a heuristic, and
+    ``POST /v1/notifications/verify-webhook-signature`` is the counterexample: a
+    POST that changes nothing and should be retried freely. Callers of the raw
+    client may leave this unset and get the heuristic; the higher-level helpers
+    declare it explicitly.
+    """
+
+    #: Money moves. Strict mode refuses the call without a ``request_id``.
+    REQUIRED = "required"
+
+    #: A key helps, but its absence is not a defect: no warning, and still not
+    #: retried without one.
+    OPTIONAL = "optional"
+
+    #: Side-effect-free: retryable even with no key, and never reported.
+    NOT_APPLICABLE = "not_applicable"
 
 #: Methods that can be repeated without changing the outcome.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
@@ -102,13 +125,15 @@ class _BasePayPalClient:
 
     # -- retry decisions ---------------------------------------------------
 
-    def _is_safe_to_retry(self, method, request_id):
+    def _is_safe_to_retry(self, method, request_id, idempotency=None):
         """Can this request be repeated without risking a double charge?"""
+        if idempotency is Idempotency.NOT_APPLICABLE:
+            return True
         if method.upper() in SAFE_METHODS:
             return True
         return bool(request_id)
 
-    def _check_idempotency(self, method, url, request_id):
+    def _check_idempotency(self, method, url, request_id, idempotency=None):
         """Report a mutating request that cannot be retried safely.
 
         With ``STRICT_IDEMPOTENCY`` on this raises before any I/O happens; the
@@ -125,7 +150,12 @@ class _BasePayPalClient:
         """
         if self.config.max_retries == 0:
             return
-        if self._is_safe_to_retry(method, request_id):
+        if request_id:
+            return
+        if idempotency in (Idempotency.OPTIONAL, Idempotency.NOT_APPLICABLE):
+            return
+        # No declared policy: fall back to the HTTP heuristic.
+        if idempotency is None and self._is_safe_to_retry(method, request_id):
             return
 
         endpoint = endpoint_label(url)
@@ -146,19 +176,19 @@ class _BasePayPalClient:
             },
         )
 
-    def _should_retry_status(self, status_code, method, request_id, attempt):
+    def _should_retry_status(self, status_code, method, request_id, attempt, idempotency=None):
         if attempt >= self.config.max_retries:
             return False
         if status_code not in RETRY_STATUSES:
             return False
-        return self._is_safe_to_retry(method, request_id)
+        return self._is_safe_to_retry(method, request_id, idempotency)
 
-    def _should_retry_transport(self, method, request_id, attempt):
+    def _should_retry_transport(self, method, request_id, attempt, idempotency=None):
         # A connection error may still have reached PayPal, so the same
         # idempotency rule applies.
         if attempt >= self.config.max_retries:
             return False
-        return self._is_safe_to_retry(method, request_id)
+        return self._is_safe_to_retry(method, request_id, idempotency)
 
     def _backoff(self, attempt, retry_after=None):
         if retry_after is not None:
@@ -219,6 +249,7 @@ class PayPalClient(_BasePayPalClient):
         params=None,
         headers=None,
         request_id=None,
+        idempotency=None,
         authenticate=True,
     ):
         """Perform a request and return the decoded body.
@@ -231,7 +262,7 @@ class PayPalClient(_BasePayPalClient):
         method = method.upper()
         url = self._url(path)
         # Before any I/O: strict mode must refuse without touching the network.
-        self._check_idempotency(method, url, request_id)
+        self._check_idempotency(method, url, request_id, idempotency)
         attempt = 0
         token_refreshed = False
         force_refresh = False
@@ -253,7 +284,7 @@ class PayPalClient(_BasePayPalClient):
                     headers=self._headers(token, request_id=request_id, extra=headers),
                 )
             except httpx.HTTPError as exc:
-                if self._should_retry_transport(method, request_id, attempt):
+                if self._should_retry_transport(method, request_id, attempt, idempotency):
                     time.sleep(self._backoff(attempt))
                     attempt += 1
                     continue
@@ -265,7 +296,9 @@ class PayPalClient(_BasePayPalClient):
                 force_refresh = True
                 continue
 
-            if self._should_retry_status(response.status_code, method, request_id, attempt):
+            if self._should_retry_status(
+                response.status_code, method, request_id, attempt, idempotency
+            ):
                 time.sleep(self._backoff(attempt, retry_after_seconds(response)))
                 attempt += 1
                 continue
@@ -319,12 +352,13 @@ class AsyncPayPalClient(_BasePayPalClient):
         params=None,
         headers=None,
         request_id=None,
+        idempotency=None,
         authenticate=True,
     ):
         method = method.upper()
         url = self._url(path)
         # Before any I/O: strict mode must refuse without touching the network.
-        self._check_idempotency(method, url, request_id)
+        self._check_idempotency(method, url, request_id, idempotency)
         attempt = 0
         token_refreshed = False
         force_refresh = False
@@ -346,7 +380,7 @@ class AsyncPayPalClient(_BasePayPalClient):
                     headers=self._headers(token, request_id=request_id, extra=headers),
                 )
             except httpx.HTTPError as exc:
-                if self._should_retry_transport(method, request_id, attempt):
+                if self._should_retry_transport(method, request_id, attempt, idempotency):
                     await asyncio.sleep(self._backoff(attempt))
                     attempt += 1
                     continue
@@ -357,7 +391,9 @@ class AsyncPayPalClient(_BasePayPalClient):
                 force_refresh = True
                 continue
 
-            if self._should_retry_status(response.status_code, method, request_id, attempt):
+            if self._should_retry_status(
+                response.status_code, method, request_id, attempt, idempotency
+            ):
                 await asyncio.sleep(self._backoff(attempt, retry_after_seconds(response)))
                 attempt += 1
                 continue

@@ -97,6 +97,12 @@ The recommended sequence to get there:
 The default is ``False`` only because those helpers do not exist yet; it will
 flip to ``True`` before 0.1.0.
 
+Strict mode is safe to run in production because a policy can be declared per
+operation: a side-effect-free POST marked
+:attr:`Idempotency.NOT_APPLICABLE <paypal_checkout.client.Idempotency>` is never
+flagged, so the guarantee does not turn into a false-positive factory. See
+:doc:`usage`.
+
 Both the warning and the error are silent when ``MAX_RETRIES`` is ``0`` — with
 retries disabled there is no retry for a missing key to make unsafe.
 

@@ -273,11 +273,25 @@ deliberately *sharp*. Requirements:
   caller's harmless POST would be refused.
 
 Work items:
+- [x] **`money.py`** (2026-07-28) — `format_amount` / `parse_amount` /
+      `amount_payload` / `parse_amount_payload`, `PayPalAmountError`. Rejects
+      floats outright, refuses to *drop* precision (padding `10.1` → `"10.10"` is
+      fine; `10.005` in EUR raises — rounding is the caller's decision, not a
+      silent one). Zero-decimal set `{HUF, JPY, TWD}` **verified against PayPal's
+      currency-codes reference on 2026-07-28**; no PayPal currency has 3
+      decimals; unknown currencies default to 2 decimals rather than being
+      rejected, so a currency PayPal adds later doesn't need a release here.
+- [x] **`Idempotency` enum + `client.request(..., idempotency=...)`** (2026-07-28).
+      `NOT_APPLICABLE` makes a write retryable with no key *and* exempt from the
+      report — this is what makes "strict in production" viable instead of a
+      false-positive factory. `OPTIONAL` silences the report but does **not**
+      loosen retry safety (pinned by a test). `REQUIRED` is flagged even on a
+      safe method, since the policy describes the operation, not the verb. The
+      HTTP heuristic is now only the fallback when nothing is declared.
 - [ ] create / show / capture / authorize, with the `request_id` scheme above
       generated and persisted by the wrapper, never by the caller
-- [ ] `Idempotency` enum + `client.request(..., idempotency=...)`; wrappers declare
-      their policy, the method heuristic demoted to a fallback
-- [ ] flip `STRICT_IDEMPOTENCY` to default `True` (do it before 0.1.0)
+- [ ] flip `STRICT_IDEMPOTENCY` to default `True` (before 0.1.0; now gated only
+      on the wrappers, since the enum has landed)
 - [ ] `PayPalOrder`, `Capture` models (+ generic FK to the host order) + signals; admin
 - [ ] template tag for the JS SDK v6 script + button container
 - [ ] `example/` demo: cart → button → capture → order marked paid

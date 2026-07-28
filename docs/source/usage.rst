@@ -86,6 +86,59 @@ caller has not declared the persistent identity of the operation — so the clie
 reports it (a warning, or an error under ``STRICT_IDEMPOTENCY``) instead of
 papering over it.
 
+Declaring an idempotency policy
+-------------------------------
+
+The method heuristic above is only a fallback. An operation can declare what it
+actually needs, which is a property of the operation rather than of the verb:
+
+.. code-block:: python
+
+   from paypal_checkout import Idempotency
+
+   # Money moves: strict mode refuses this without a request_id.
+   client.post(f"/v2/checkout/orders/{oid}/capture",
+               request_id=f"order:{pk}:capture:1",
+               idempotency=Idempotency.REQUIRED)
+
+   # Side-effect-free POST: retryable with no key, never reported.
+   client.post("/v1/notifications/verify-webhook-signature", json=payload,
+               idempotency=Idempotency.NOT_APPLICABLE)
+
+``OPTIONAL`` sits in between: it silences the report but does **not** make the
+write repeatable — retry safety always follows the key, never the declaration.
+
+Amounts
+-------
+
+Amounts go to PayPal as strings with a currency-correct number of decimals, and
+:mod:`paypal_checkout.money` is the only thing that should build them:
+
+.. code-block:: python
+
+   >>> from decimal import Decimal
+   >>> from paypal_checkout import amount_payload, format_amount
+   >>> format_amount(Decimal("10.1"), "EUR")
+   '10.10'
+   >>> format_amount(1000, "JPY")     # HUF, JPY and TWD take no decimals
+   '1000'
+   >>> amount_payload(Decimal("10.50"), "EUR")
+   {'currency_code': 'EUR', 'value': '10.50'}
+
+Two things it refuses outright, both raising
+:class:`~paypal_checkout.exceptions.PayPalAmountError`:
+
+.. code-block:: python
+
+   >>> format_amount(10.0, "EUR")        # a float amount is a bug
+   PayPalAmountError: refusing to build an amount from the float 10.0 ...
+   >>> format_amount(Decimal("10.005"), "EUR")   # would lose a digit
+   PayPalAmountError: 10.005 cannot be expressed in EUR, which takes 2 decimals ...
+
+Padding is fine (``10.1`` → ``"10.10"``); *dropping* digits is not. Rounding is
+your decision, not the library's — silently rounding would charge the buyer
+something other than what your own records say.
+
 Errors
 ------
 

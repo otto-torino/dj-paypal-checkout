@@ -7,9 +7,10 @@ PROGRESS.md for the milestone plan.
 
 __version__ = "0.0.0"
 
-from .client import AsyncPayPalClient, PayPalClient  # noqa: E402
+from .client import AsyncPayPalClient, Idempotency, PayPalClient  # noqa: E402
 from .config import PayPalConfig, get_config  # noqa: E402
 from .exceptions import (  # noqa: E402
+    PayPalAmountError,
     PayPalAPIError,
     PayPalAuthenticationError,
     PayPalConfigurationError,
@@ -21,16 +22,22 @@ from .exceptions import (  # noqa: E402
     PayPalServerError,
     PayPalValidationError,
 )
+from .money import amount_payload, format_amount, parse_amount  # noqa: E402
 
 __all__ = [
     "__version__",
     "AsyncPayPalClient",
     "PayPalClient",
+    "Idempotency",
     "PayPalConfig",
     "get_config",
+    "format_amount",
+    "parse_amount",
+    "amount_payload",
     "PayPalError",
     "PayPalConfigurationError",
     "PayPalIdempotencyError",
+    "PayPalAmountError",
     "PayPalConnectionError",
     "PayPalAPIError",
     "PayPalAuthenticationError",

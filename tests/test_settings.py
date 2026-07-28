@@ -25,6 +25,16 @@ DATABASES = {
 
 USE_TZ = True
 
+# Several tests deliberately trigger the "write without a request_id" warning.
+# Send it to a null handler so it does not litter the test output; assertLogs
+# still captures it, because it attaches its own handler to the logger.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"null": {"class": "logging.NullHandler"}},
+    "loggers": {"paypal_checkout": {"handlers": ["null"], "propagate": False}},
+}
+
 ROOT_URLCONF = "tests.urls"
 
 # Sandbox-shaped dummy credentials. No test may perform a live call: every

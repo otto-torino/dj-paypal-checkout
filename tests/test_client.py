@@ -3,7 +3,12 @@ from django.core.cache import cache
 from django.test import SimpleTestCase
 
 from paypal_checkout import __version__
-from paypal_checkout.client import AsyncPayPalClient, PayPalClient, endpoint_label
+from paypal_checkout.client import (
+    AsyncPayPalClient,
+    Idempotency,
+    PayPalClient,
+    endpoint_label,
+)
 from paypal_checkout.exceptions import (
     PayPalAPIError,
     PayPalAuthenticationError,
@@ -264,6 +269,95 @@ class RetrySafetyRulesTests(SimpleTestCase):
             with self.subTest(method=method):
                 self.assertFalse(self.client._is_safe_to_retry(method, None))
                 self.assertTrue(self.client._is_safe_to_retry(method, "req-1"))
+
+    def test_not_applicable_makes_a_write_retryable_without_a_key(self):
+        self.assertTrue(
+            self.client._is_safe_to_retry("POST", None, Idempotency.NOT_APPLICABLE)
+        )
+
+    def test_optional_does_not_loosen_retry_safety(self):
+        """OPTIONAL silences the report; it does not make a write repeatable."""
+        self.assertFalse(self.client._is_safe_to_retry("POST", None, Idempotency.OPTIONAL))
+        self.assertFalse(self.client._is_safe_to_retry("POST", None, Idempotency.REQUIRED))
+
+
+class IdempotencyPolicyTests(SimpleTestCase):
+    """A declared policy overrides the HTTP-method heuristic."""
+
+    def setUp(self):
+        cache.clear()
+
+    VERIFY = "/v1/notifications/verify-webhook-signature"
+
+    def test_not_applicable_write_is_retried_without_a_key(self):
+        """The verify-webhook-signature case: a POST that changes nothing."""
+        fake = FakePayPal().queue(
+            self.VERIFY,
+            httpx.Response(503, json={"name": "SERVICE_UNAVAILABLE"}),
+            httpx.Response(200, json={"verification_status": "SUCCESS"}),
+        )
+        with PayPalClient(make_config(), transport=fake.transport) as client:
+            result = client.post(self.VERIFY, json={}, idempotency=Idempotency.NOT_APPLICABLE)
+
+        self.assertEqual(result, {"verification_status": "SUCCESS"})
+        self.assertEqual(len(fake.api_requests()), 2)
+
+    def test_not_applicable_is_never_reported(self):
+        fake = FakePayPal().queue(self.VERIFY, httpx.Response(200, json={}))
+        with PayPalClient(make_config(), transport=fake.transport) as client:
+            with self.assertNoLogs("paypal_checkout.client", level="WARNING"):
+                client.post(self.VERIFY, json={}, idempotency=Idempotency.NOT_APPLICABLE)
+
+    def test_not_applicable_survives_strict_mode(self):
+        """Otherwise 'strict in production' would be a false positive factory."""
+        fake = FakePayPal().queue(self.VERIFY, httpx.Response(200, json={"ok": True}))
+        config = make_config(strict_idempotency=True)
+        with PayPalClient(config, transport=fake.transport) as client:
+            self.assertEqual(
+                client.post(self.VERIFY, json={}, idempotency=Idempotency.NOT_APPLICABLE),
+                {"ok": True},
+            )
+
+    def test_optional_silences_the_report_but_keeps_the_safety(self):
+        fake = FakePayPal().queue(ORDERS, httpx.Response(500, json={"name": "BOOM"}))
+        with PayPalClient(make_config(), transport=fake.transport) as client:
+            with self.assertNoLogs("paypal_checkout.client", level="WARNING"):
+                with self.assertRaises(PayPalServerError):
+                    client.post(ORDERS, json={}, idempotency=Idempotency.OPTIONAL)
+
+        self.assertEqual(len(fake.api_requests()), 1, "still not retried")
+
+    def test_optional_survives_strict_mode(self):
+        fake = FakePayPal().queue(ORDERS, httpx.Response(201, json={}))
+        config = make_config(strict_idempotency=True)
+        with PayPalClient(config, transport=fake.transport) as client:
+            client.post(ORDERS, json={}, idempotency=Idempotency.OPTIONAL)
+
+    def test_required_is_reported_even_on_a_safe_method(self):
+        """The policy is a property of the operation, not of the verb."""
+        fake = FakePayPal().queue(ORDERS, httpx.Response(200, json={}))
+        with PayPalClient(make_config(), transport=fake.transport) as client:
+            with self.assertLogs("paypal_checkout.client", level="WARNING") as logs:
+                client.get(ORDERS, idempotency=Idempotency.REQUIRED)
+
+        self.assertEqual(logs.records[0].paypal_issue, "missing_request_id")
+
+    def test_required_raises_in_strict_mode(self):
+        fake = FakePayPal()
+        config = make_config(strict_idempotency=True)
+        with PayPalClient(config, transport=fake.transport) as client:
+            with self.assertRaises(PayPalIdempotencyError):
+                client.post(ORDERS, json={}, idempotency=Idempotency.REQUIRED)
+
+        self.assertEqual(fake.requests, [])
+
+    def test_a_request_id_satisfies_every_policy(self):
+        fake = FakePayPal().queue(ORDERS, httpx.Response(201, json={}), httpx.Response(201, json={}))
+        config = make_config(strict_idempotency=True)
+        with PayPalClient(config, transport=fake.transport) as client:
+            with self.assertNoLogs("paypal_checkout.client", level="WARNING"):
+                client.post(ORDERS, json={}, request_id="k1", idempotency=Idempotency.REQUIRED)
+                client.post(ORDERS, json={}, request_id="k2")
 
 
 class ErrorMappingTests(SimpleTestCase):

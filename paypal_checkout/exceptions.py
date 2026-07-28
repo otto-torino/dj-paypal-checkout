@@ -11,6 +11,7 @@ __all__ = [
     "PayPalError",
     "PayPalConfigurationError",
     "PayPalIdempotencyError",
+    "PayPalAmountError",
     "PayPalConnectionError",
     "PayPalAPIError",
     "PayPalAuthenticationError",
@@ -38,6 +39,14 @@ class PayPalIdempotencyError(PayPalError):
 
     Only raised when ``PAYPAL['STRICT_IDEMPOTENCY']`` is on — a caller-side
     programming error, raised *before* anything is sent to PayPal.
+    """
+
+
+class PayPalAmountError(PayPalError, ValueError):
+    """An amount cannot be expressed as a PayPal amount for its currency.
+
+    A ``ValueError`` too, since it always signals a bad value at the call site
+    (a float amount, a negative, precision that would have to be dropped).
     """
 
 
