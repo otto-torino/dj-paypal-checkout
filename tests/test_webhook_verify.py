@@ -13,7 +13,9 @@ from paypal_checkout.exceptions import (
     PayPalWebhookError,
 )
 from paypal_checkout.webhooks.verify import (
+    MAX_CERTIFICATE_BYTES,
     VERIFY_PATH,
+    cert_cache_key,
     fetch_certificate,
     signature_headers,
     signed_message,
@@ -80,6 +82,22 @@ class ValidateCertUrlTests(SimpleTestCase):
             with self.subTest(url=url):
                 with self.assertRaises(PayPalWebhookError):
                     validate_cert_url(url)
+
+    def test_embedded_credentials_are_refused(self):
+        with self.assertRaisesMessage(PayPalWebhookError, "must not carry credentials"):
+            validate_cert_url("https://user:pass@api.paypal.com/certs/CERT-1")
+
+    def test_explicit_port_443_is_accepted(self):
+        url = "https://api.paypal.com:443/certs/CERT-1"
+        self.assertEqual(validate_cert_url(url), url)
+
+    def test_other_ports_are_refused(self):
+        with self.assertRaisesMessage(PayPalWebhookError, "must use port 443"):
+            validate_cert_url("https://api.paypal.com:8443/certs/CERT-1")
+
+    def test_a_malformed_port_is_refused(self):
+        with self.assertRaisesMessage(PayPalWebhookError, "not a valid URL"):
+            validate_cert_url("https://api.paypal.com:notaport/certs/CERT-1")
 
 
 class SignatureHeadersTests(SimpleTestCase):
@@ -150,6 +168,40 @@ class FetchCertificateTests(SimpleTestCase):
 
         with self.assertRaises(PayPalConnectionError):
             fetch_certificate(self.signer.CERT_URL, config=self.config, transport=transport)
+
+    def test_a_redirect_is_not_followed(self):
+        """Following one would defeat the paypal.com host check entirely."""
+        fake = FakePayPal().queue(
+            "/v1/notifications/certs/CERT-360caa42-fca2a594",
+            httpx.Response(302, headers={"Location": "https://evil.example/cert"}),
+        )
+
+        with self.assertRaisesMessage(PayPalWebhookError, "redirects are not followed"):
+            fetch_certificate(self.signer.CERT_URL, config=self.config, transport=fake.transport)
+
+        self.assertEqual(len(fake.requests), 1, "the redirect target is never requested")
+
+    def test_an_oversized_body_is_refused(self):
+        transport = self._transport(
+            httpx.Response(200, content=b"x" * (MAX_CERTIFICATE_BYTES + 1))
+        )
+
+        with self.assertRaisesMessage(PayPalWebhookError, "exceeds"):
+            fetch_certificate(self.signer.CERT_URL, config=self.config, transport=transport)
+
+    def test_an_empty_body_is_refused(self):
+        transport = self._transport(httpx.Response(200, content=b""))
+
+        with self.assertRaisesMessage(PayPalWebhookError, "is empty"):
+            fetch_certificate(self.signer.CERT_URL, config=self.config, transport=transport)
+
+    def test_the_cache_key_is_hashed(self):
+        """An attacker-supplied URL must not become the cache key verbatim."""
+        key = cert_cache_key(self.signer.CERT_URL)
+
+        self.assertNotIn(self.signer.CERT_URL, key)
+        self.assertLess(len(key), 80)
+        self.assertNotEqual(key, cert_cache_key(self.signer.CERT_URL + "x"))
 
 
 class VerifyOfflineTests(SimpleTestCase):

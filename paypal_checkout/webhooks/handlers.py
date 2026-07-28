@@ -16,7 +16,13 @@ from ..exceptions import PayPalWebhookNotReady
 from ..models import Authorization, Capture, PayPalOrder
 from ..signals import payment_captured, payment_denied, payment_refunded
 
-__all__ = ["register_handler", "get_handlers", "dispatch", "registered_event_types"]
+__all__ = [
+    "register_handler",
+    "unregister_handlers",
+    "get_handlers",
+    "dispatch",
+    "registered_event_types",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +45,15 @@ def register_handler(*event_types):
         return func
 
     return decorator
+
+
+def unregister_handlers(event_type):
+    """Remove every handler for ``event_type`` and return them.
+
+    Use it to replace a built-in handler with your own, or to undo a
+    registration in tests.
+    """
+    return _HANDLERS.pop(event_type, [])
 
 
 def get_handlers(event_type):

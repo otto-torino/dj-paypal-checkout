@@ -2,18 +2,24 @@
 
 import json
 from decimal import Decimal
+from unittest import mock
 
 from django.core.cache import cache
-from django.test import TestCase, override_settings
+from django.db import IntegrityError
+from django.utils import timezone
+from django.test import TestCase, TransactionTestCase, override_settings
 
 from paypal_checkout.exceptions import PayPalWebhookNotReady
 from paypal_checkout.models import Authorization, Capture, PayPalOrder, WebhookEvent
 from paypal_checkout.signals import payment_captured, payment_denied, payment_refunded
+from paypal_checkout.webhooks.views import ProcessWebhookView
 from paypal_checkout.webhooks.handlers import (
+    _HANDLERS,
     dispatch,
     get_handlers,
     register_handler,
     registered_event_types,
+    unregister_handlers,
 )
 
 from .support import WebhookSigner, catch_signal, make_config
@@ -97,16 +103,24 @@ class RegistryTests(TestCase):
 
     def test_a_custom_handler_can_be_added(self):
         seen = []
+        self.addCleanup(unregister_handlers, "TEST.CUSTOM.EVENT")
 
         @register_handler("TEST.CUSTOM.EVENT")
         def handler(event):
             seen.append(event.event_id)
 
-        self.addCleanup(get_handlers("TEST.CUSTOM.EVENT").clear)
         event = store_event(event_payload("TEST.CUSTOM.EVENT"))
 
         self.assertEqual(dispatch(event), 1)
         self.assertEqual(seen, ["WH-EVT-1"])
+
+    def test_handlers_can_be_unregistered(self):
+        removed = unregister_handlers("PAYMENT.CAPTURE.PENDING")
+        self.addCleanup(_HANDLERS.__setitem__, "PAYMENT.CAPTURE.PENDING", removed)
+
+        self.assertTrue(removed)
+        self.assertEqual(get_handlers("PAYMENT.CAPTURE.PENDING"), [])
+        self.assertEqual(unregister_handlers("NOT.REGISTERED"), [])
 
     def test_an_unhandled_event_is_not_an_error(self):
         event = store_event(event_payload("SOMETHING.WE.DO.NOT.HANDLE"))
@@ -357,6 +371,63 @@ class ProcessWebhookViewTests(OrderFixtureMixin, TestCase):
         event = WebhookEvent.objects.get(event_id="WH-EVT-1")
         self.assertEqual(event.last_error, "")
 
+    def test_a_stored_payload_is_refreshed_when_the_retry_differs(self):
+        """A retry can carry a newer resource state than the first delivery."""
+        order, capture = self.make_order()
+        stale = event_payload()
+        stale["resource"] = {**stale["resource"], "status": "PENDING"}
+        stale["summary"] = "older"
+        store_event(stale)
+
+        self.deliver()
+
+        event = WebhookEvent.objects.get(event_id="WH-EVT-1")
+        self.assertEqual(event.summary, "test event")
+        self.assertEqual(event.resource["status"], "COMPLETED")
+
+    def test_an_identical_redelivery_is_not_rewritten(self):
+        order, capture = self.make_order()
+        payload = event_payload()
+        event = store_event(payload)
+        before = WebhookEvent.objects.values_list("payload", flat=True).get(pk=event.pk)
+
+        self.deliver(payload)
+
+        self.assertEqual(
+            WebhookEvent.objects.values_list("payload", flat=True).get(pk=event.pk), before
+        )
+
+    def test_losing_the_claim_after_reading_the_row_is_a_duplicate(self):
+        """The row was claimed by a rival between our read and our UPDATE."""
+        self.make_order()
+        event = store_event(event_payload())
+        WebhookEvent.objects.filter(pk=event.pk).update(processed_at=timezone.now())
+        # A stale in-memory copy, exactly what a rival's commit leaves us holding.
+        stale = WebhookEvent.objects.get(pk=event.pk)
+        stale.processed_at = None
+
+        with mock.patch.object(ProcessWebhookView, "_store", return_value=stale):
+            with catch_signal(payment_captured) as received:
+                response = self.deliver()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "duplicate")
+        self.assertEqual(received, [], "the handlers must not run")
+
+    def test_losing_the_race_to_create_the_row_is_survivable(self):
+        self.make_order()
+        payload = event_payload()
+        store_event(payload)
+
+        with mock.patch.object(
+            WebhookEvent.objects, "get_or_create", side_effect=IntegrityError("dup")
+        ):
+            response = self.deliver(payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "processed")
+        self.assertEqual(WebhookEvent.objects.count(), 1)
+
     def test_missing_signature_headers_are_rejected(self):
         body = json.dumps(event_payload()).encode()
 
@@ -476,3 +547,132 @@ class WebhookEventModelTests(TestCase):
     def test_str(self):
         event = store_event(event_payload())
         self.assertEqual(str(event), "PAYMENT.CAPTURE.COMPLETED WH-EVT-1")
+
+
+@override_settings(PAYPAL=WEBHOOK_SETTINGS)
+class ConcurrentDeliveryTests(OrderFixtureMixin, TransactionTestCase):
+    """Two deliveries of one event must not both run the handlers.
+
+    ``TransactionTestCase`` because the threaded test needs committed rows to be
+    visible across connections.
+    """
+
+    url = "/paypal/webhook/"
+    reset_sequences = True
+
+    def setUp(self):
+        cache.clear()
+        self.signer = WebhookSigner(webhook_id="WH-TEST-1")
+        self.signer.prime_certificate_cache(make_config())
+        self.calls = []
+        self.addCleanup(unregister_handlers, "TEST.CONCURRENT")
+
+    def register_counting_handler(self, before_return=None):
+        @register_handler("TEST.CONCURRENT")
+        def handler(event):
+            self.calls.append(event.event_id)
+            if before_return is not None:
+                before_return()
+
+        return handler
+
+    def deliver(self, client=None, payload=None):
+        body = json.dumps(payload or event_payload("TEST.CONCURRENT")).encode()
+        return (client or self.client).post(
+            self.url,
+            data=body,
+            content_type="application/json",
+            headers=self.signer.headers(body),
+        )
+
+    def test_the_claim_is_taken_before_the_handlers_run(self):
+        """A delivery arriving mid-handler already sees the event claimed.
+
+        Deterministic stand-in for the interleaving: the nested delivery runs
+        while the first one holds its transaction open.
+        """
+        nested = {}
+
+        def deliver_again():
+            nested["response"] = self.deliver(client=self.client_class())
+
+        self.register_counting_handler(before_return=deliver_again)
+
+        first = self.deliver()
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()["status"], "processed")
+        self.assertEqual(nested["response"].json()["status"], "duplicate")
+        self.assertEqual(self.calls, ["WH-EVT-1"], "the handler ran exactly once")
+
+    def test_two_threads_delivering_at_once_run_the_handler_once(self):
+        import threading
+
+        from django.db import connection
+
+        self.register_counting_handler()
+        barrier = threading.Barrier(2)
+        outcomes = []
+
+        def worker():
+            try:
+                barrier.wait(timeout=5)
+                response = self.deliver(client=self.client_class())
+                outcomes.append(response.json().get("status"))
+            except Exception as exc:  # a lock timeout is a safe loser too
+                outcomes.append(f"error:{type(exc).__name__}")
+            finally:
+                connection.close()
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        # The invariant that matters: the handler body ran exactly once, and
+        # exactly one delivery was told it had processed the event. The loser is
+        # allowed to be either "duplicate" or a lock error — asserting which
+        # would make this a test of SQLite's locking rather than of the claim.
+        self.assertEqual(len(self.calls), 1, f"handler ran {len(self.calls)}x: {outcomes}")
+        self.assertEqual(outcomes.count("processed"), 1, outcomes)
+        self.assertEqual(len(outcomes), 2, outcomes)
+        self.assertEqual(WebhookEvent.objects.count(), 1)
+        self.assertTrue(WebhookEvent.objects.get(event_id="WH-EVT-1").is_processed)
+
+    def test_a_failed_handler_leaves_the_event_claimable_again(self):
+        """The rollback must undo the claim, or the retry could never run."""
+        state = {"fail": True}
+
+        @register_handler("TEST.CONCURRENT")
+        def handler(event):
+            self.calls.append(event.event_id)
+            if state["fail"]:
+                raise RuntimeError("transient")
+
+        self.assertEqual(self.deliver().status_code, 500)
+        event = WebhookEvent.objects.get(event_id="WH-EVT-1")
+        self.assertFalse(event.is_processed, "the claim must have been rolled back")
+        self.assertEqual(event.last_error, "transient")
+
+        state["fail"] = False
+        self.assertEqual(self.deliver().json()["status"], "processed")
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(WebhookEvent.objects.get(event_id="WH-EVT-1").last_error, "")
+
+    def test_handler_effects_and_processed_commit_together(self):
+        """No window where the work is applied but the event looks unprocessed."""
+        observed = {}
+
+        def observe():
+            # Inside the handler's transaction the claim is already in place.
+            observed["claimed"] = WebhookEvent.objects.filter(
+                event_id="WH-EVT-1", processed_at__isnull=False
+            ).exists()
+
+        self.register_counting_handler(before_return=observe)
+
+        self.deliver()
+
+        self.assertTrue(observed["claimed"])
+        self.assertTrue(WebhookEvent.objects.get(event_id="WH-EVT-1").is_processed)

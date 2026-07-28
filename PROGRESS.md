@@ -409,6 +409,46 @@ Work items:
 - [x] Docs: new `webhooks.rst` (setup, the two modes, the status-code contract,
       custom handlers, reconciling), plus the endpoint wired into the demo.
 
+#### M3 review follow-ups (Elisa, 2026-07-28) — all three applied
+
+- [x] **`400` was documented wrong, and it was my error.** PayPal retries *any*
+      non-2xx (~25 attempts over 3 days), so "nothing is retried" was false.
+      Re-worded everywhere (`views.py`, `webhooks.rst`, `CLAUDE.md`): the status
+      code does not control retrying, it records what we did — `400` is "not
+      trustworthy, **not persisted**", and PayPal re-asking only gets the same
+      answer, which is the desired outcome for a forgery.
+- [x] **Cert URL hardening**, beyond the anti-`paypal.com.evil.example` check:
+      credentials in the URL refused, port must be 443 (a malformed port is a
+      clean error, not a crash), **redirects not followed** (anything but `200`
+      refused — one hop off a validated host would defeat the whole check),
+      body capped at 64 KiB (the URL is attacker-supplied, so an unbounded read
+      is a memory DoS), empty body refused, and the cache key **hashed** so a
+      hostile URL cannot become a backend-hostile key verbatim.
+- [x] **Atomic claim instead of a read.** Ownership is now taken with
+      `UPDATE ... WHERE processed_at IS NULL` inside the handlers' transaction:
+      the write lock serialises rivals (the loser matches 0 rows → `duplicate`),
+      `processed_at` commits *together with* the handler effects, and a failure
+      rolls the claim back while `last_error` is written outside the transaction
+      and survives. Also handles losing the `get_or_create` race (`IntegrityError`
+      → re-fetch), and an identical redelivery no longer costs a pointless write.
+- [x] **Real concurrency tests.** Two threads with a barrier delivering the same
+      event: the handler body runs **exactly once** and exactly one delivery is
+      told `processed`. Plus deterministic tests for the claim being taken
+      *before* dispatch, the claim surviving as rollback-able on failure, and
+      `processed_at` being visible inside the handler's transaction.
+      - This forced a real change to the harness: `tests/test_settings.py` now
+        uses a **file** test DB with `timeout: 20`, because SQLite's shared-cache
+        `:memory:` mode returns "table is locked" immediately instead of
+        honouring the busy timeout — the first version of the threaded test
+        "passed" with *both* threads erroring before reaching the handler, which
+        is exactly the false confidence Elisa warned about. Suite cost: ~0.5s → ~1s.
+- [x] Documented the shared-account rule explicitly (`webhooks.rst`): unknown
+      capture/order/authorization → ignored and acked; unknown capture whose
+      `related_ids.order_id` *is* ours → retry, not a foreign payment.
+- [x] `unregister_handlers()` added (a project replacing a built-in handler needs
+      it; the earlier test cleanup was a silent no-op because `get_handlers()`
+      returns a copy).
+
 ### M4 — refunds & reconciliation
 - [ ] refunds (full/partial), `Refund` model, `payment_refunded` signal
 - [ ] management command to re-sync an order/capture from PayPal

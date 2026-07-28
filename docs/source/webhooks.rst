@@ -42,10 +42,18 @@ PayPal signs with RSA-SHA256 over
 
 ``offline`` (default)
    Verified locally against the certificate from ``PAYPAL-CERT-URL``. Needs the
-   ``crypto`` extra (``pip install "dj-paypal-checkout[crypto]"``). The cert URL
-   is validated as an HTTPS paypal.com host **before** it is fetched — without
-   that check a forged header could point the verifier at an attacker's
-   certificate and every forgery would pass. The certificate is cached for a day.
+   ``crypto`` extra (``pip install "dj-paypal-checkout[crypto]"``). The
+   certificate is cached for a day, under a hashed key.
+
+   That URL arrives in a request header, so it is untrusted input and is
+   validated **before** anything is fetched. Refused: any scheme but ``https``,
+   embedded credentials, any host that is not ``paypal.com`` or a
+   ``.paypal.com`` subdomain (so ``paypal.com.evil.example`` does not slip
+   through), and any port but 443. The fetch itself does not follow redirects —
+   one hop off a validated host would defeat the whole check, so anything but
+   ``200`` is refused — applies the configured ``TIMEOUT``, and caps the body at
+   64 KiB. Without those checks a forged header points the verifier at the
+   attacker's certificate and every forgery passes.
 
 ``api``
    Asks ``/v1/notifications/verify-webhook-signature``. Simpler, one extra call
@@ -60,15 +68,20 @@ unreachable) the request is refused rather than waved through.
 What the endpoint answers, and why
 ----------------------------------
 
-The status code is the contract with PayPal's retry machinery:
+PayPal retries **any** non-2xx response — around 25 attempts spread over three
+days. The status code therefore does not decide *whether* PayPal retries; it
+records what this endpoint did with the delivery:
 
-=========  ===========================================================
+=========  ============================================================
 ``400``    Not trustworthy: missing headers, bad signature, unreadable
-           body, no event id. Nothing is stored, nothing is retried.
+           body, no event id. **Not persisted.** PayPal will retry and
+           get the same answer, which is what you want: a forged or
+           malformed delivery never becomes state.
 ``200``    Stored **and** finished — including a duplicate delivery of
            an event already processed.
-``500``    Stored but **not** finished: a handler raised. PayPal retries.
-=========  ===========================================================
+``500``    Stored but **not** finished: a handler raised. Here the retry
+           is the point.
+=========  ============================================================
 
 The ``500`` case is the interesting one. ``WebhookEvent.event_id`` is unique,
 which is what stops double-processing — but a row that exists and was never
@@ -81,6 +94,39 @@ response, the handler raises
 :class:`~paypal_checkout.exceptions.PayPalWebhookNotReady`, the endpoint answers
 ``500``, and PayPal's retry a minute later finds the row and succeeds. Free
 reconciliation.
+
+Concurrency
+-----------
+
+Two deliveries of the same event can arrive at the same time — a retry racing
+the original is normal. A unique ``event_id`` is **not** enough to stop both from
+running the handlers: both would read ``processed_at IS NULL`` and both proceed.
+
+Ownership is therefore taken with a conditional ``UPDATE``
+(``... WHERE processed_at IS NULL``) inside the same transaction as the handlers.
+That gives two properties:
+
+* the write lock serialises the claim, so the loser matches zero rows and is
+  answered ``duplicate`` — no ``SELECT FOR UPDATE`` required, so it behaves the
+  same on SQLite and PostgreSQL;
+* ``processed_at`` becomes visible **only together with** the handlers' effects.
+  There is no window in which the work is applied but the event still looks
+  unprocessed, and none in which it looks processed while the effects are
+  missing.
+
+If a handler raises, that transaction rolls back — including the claim, so the
+retry can take it again — while ``last_error`` is written *outside* the
+transaction and survives.
+
+Shared PayPal accounts
+----------------------
+
+An event about a capture, order or authorization this project has never heard of
+is ignored and acknowledged: on an account shared with another integration, most
+deliveries are not yours. The one exception is deliberate: if the capture is
+unknown but its ``supplementary_data.related_ids.order_id`` *is* an order you
+own, that is the overtaking race above, not a foreign payment, so it asks for a
+retry instead of being dropped.
 
 Handled events
 --------------

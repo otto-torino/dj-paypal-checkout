@@ -124,10 +124,10 @@ class WebhookSigner:
         """Put the certificate in the cache so no HTTP fetch is attempted."""
         from django.core.cache import caches
 
-        from paypal_checkout.webhooks.verify import CERT_CACHE_PREFIX
+        from paypal_checkout.webhooks.verify import cert_cache_key
 
         caches[config.cache_alias].set(
-            f"{CERT_CACHE_PREFIX}{self.cert_url}", self.certificate_pem, 3600
+            cert_cache_key(self.cert_url), self.certificate_pem, 3600
         )
 
 

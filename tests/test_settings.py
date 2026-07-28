@@ -1,3 +1,5 @@
+from pathlib import Path
+
 SECRET_KEY = "dummy-key-for-testing"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -36,6 +38,12 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": ":memory:",
+        # A *file* test database, not in-memory: the concurrency tests need two
+        # connections to contend for real locks, and SQLite's shared-cache
+        # in-memory mode returns "table is locked" immediately instead of
+        # honouring the busy timeout.
+        "TEST": {"NAME": str(Path(__file__).resolve().parent.parent / "test_db.sqlite3")},
+        "OPTIONS": {"timeout": 20},
     },
 }
 

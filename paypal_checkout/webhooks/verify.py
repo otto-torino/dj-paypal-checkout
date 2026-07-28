@@ -27,6 +27,7 @@ that might say yes.
 """
 
 import base64
+import hashlib
 import zlib
 from urllib.parse import urlparse
 
@@ -45,6 +46,7 @@ __all__ = [
     "signature_headers",
     "signed_message",
     "validate_cert_url",
+    "cert_cache_key",
     "fetch_certificate",
     "verify_offline",
     "verify_via_api",
@@ -66,6 +68,11 @@ SUPPORTED_AUTH_ALGOS = frozenset({"SHA256withRSA"})
 
 CERT_CACHE_PREFIX = "paypal_checkout:cert:"
 CERT_CACHE_SECONDS = 24 * 60 * 60
+
+#: A PayPal signing certificate is ~2 KB. The cap exists because the URL comes
+#: from a request header: without it, a response we were tricked into fetching
+#: could stream until memory runs out.
+MAX_CERTIFICATE_BYTES = 64 * 1024
 
 VERIFY_PATH = "/v1/notifications/verify-webhook-signature"
 
@@ -103,38 +110,81 @@ def signed_message(transmission_id, transmission_time, webhook_id, body):
 def validate_cert_url(url):
     """Refuse to fetch a certificate from anywhere but PayPal over HTTPS.
 
-    Without this the signature header could point us at an attacker's
-    certificate, and every forged webhook would verify.
+    This URL arrives in a request header, i.e. from an untrusted source. Without
+    these checks a forged webhook could point us at the attacker's certificate
+    and then every forgery would verify. Refused: any scheme but https,
+    credentials embedded in the URL, a host that is not ``paypal.com`` or a
+    ``.paypal.com`` subdomain (so ``paypal.com.evil.example`` does not slip
+    through), and any port other than 443.
     """
-    parsed = urlparse(url or "")
+    try:
+        parsed = urlparse(url or "")
+        port = parsed.port
+    except ValueError as exc:
+        raise PayPalWebhookError(f"certificate URL {url!r} is not a valid URL: {exc}") from None
+
     if parsed.scheme != "https":
         raise PayPalWebhookError(f"certificate URL must be https, got {url!r}.")
+    if parsed.username or parsed.password:
+        raise PayPalWebhookError("certificate URL must not carry credentials.")
     host = (parsed.hostname or "").lower()
     if host != "paypal.com" and not host.endswith(".paypal.com"):
         raise PayPalWebhookError(f"certificate URL host {host!r} is not a paypal.com host.")
+    if port not in (None, 443):
+        raise PayPalWebhookError(f"certificate URL must use port 443, got {port}.")
     return url
 
 
+def cert_cache_key(cert_url):
+    """Cache key for a certificate URL.
+
+    Hashed, so an attacker-supplied URL cannot produce an unbounded or
+    backend-hostile key.
+    """
+    digest = hashlib.sha256(cert_url.encode("utf-8")).hexdigest()[:32]
+    return f"{CERT_CACHE_PREFIX}{digest}"
+
+
 def fetch_certificate(cert_url, *, config, transport=None):
-    """Return the PEM certificate for ``cert_url``, cached."""
+    """Return the PEM certificate for ``cert_url``, cached for a day.
+
+    Redirects are **not** followed: a redirect off a validated paypal.com URL
+    would defeat :func:`validate_cert_url`, so anything but ``200`` is refused.
+    The body is capped at :data:`MAX_CERTIFICATE_BYTES`.
+    """
     validate_cert_url(cert_url)
     cache = caches[config.cache_alias]
-    key = f"{CERT_CACHE_PREFIX}{cert_url}"
+    key = cert_cache_key(cert_url)
     cached = cache.get(key)
     if cached:
         return cached
 
     try:
-        with httpx.Client(transport=transport, timeout=config.timeout) as client:
-            response = client.get(cert_url)
+        with httpx.Client(
+            transport=transport, timeout=config.timeout, follow_redirects=False
+        ) as client:
+            with client.stream("GET", cert_url) as response:
+                if response.status_code != 200:
+                    raise PayPalWebhookError(
+                        f"could not fetch {cert_url}: HTTP {response.status_code} "
+                        "(redirects are not followed)"
+                    )
+                chunks = []
+                size = 0
+                for chunk in response.iter_bytes():
+                    size += len(chunk)
+                    if size > MAX_CERTIFICATE_BYTES:
+                        raise PayPalWebhookError(
+                            f"certificate at {cert_url} exceeds "
+                            f"{MAX_CERTIFICATE_BYTES} bytes; refusing to read it."
+                        )
+                    chunks.append(chunk)
     except httpx.HTTPError as exc:
         raise PayPalConnectionError(f"could not fetch {cert_url}: {exc}") from exc
 
-    if response.is_error:
-        raise PayPalWebhookError(
-            f"could not fetch {cert_url}: HTTP {response.status_code}"
-        )
-    pem = response.content
+    pem = b"".join(chunks)
+    if not pem:
+        raise PayPalWebhookError(f"certificate at {cert_url} is empty.")
     cache.set(key, pem, CERT_CACHE_SECONDS)
     return pem
 
