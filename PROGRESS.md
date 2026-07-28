@@ -140,10 +140,45 @@ Note: `version = "0.0.0"` means "never released" and `publish.yml` explicitly
 skips it, so the skeleton cannot publish an empty package to PyPI by accident.
 The first release is the bump to `0.1.0` on `main`.
 
-### M1 — client + auth
-- [ ] `config.py`, `auth.py` (token cache), `client.py` (sync + async, retries,
-      typed errors carrying PayPal `debug_id`)
-- [ ] tests against recorded fixtures — no live sandbox calls in CI
+### M1 — client + auth ✅ done 2026-07-28
+- [x] `config.py` — frozen `PayPalConfig` dataclass + `get_config(**overrides)`.
+      Chose a validated dataclass over a raw dict: unknown keys are **rejected**
+      (a typo can't silently leave you on a default), types are coerced, and
+      `PayPalConfigurationError` is also an `ImproperlyConfigured`. Overrides
+      make multi-account setups possible.
+- [x] `auth.py` — OAuth2 client_credentials, token cached in the Django cache
+      under `sha256(client_id:secret:environment)`: sandbox/live can't be mixed
+      up, rotating the secret invalidates immediately, credentials never appear
+      in a cache key, and a token with less life than `TOKEN_LEEWAY` isn't
+      cached. Sync + async (`aget`/`aset`).
+- [x] `exceptions.py` — `PayPalError` tree; `error_from_response` handles *both*
+      PayPal error shapes (REST `name/message/debug_id/details` and OAuth
+      `error/error_description`) and falls back to the `Paypal-Debug-Id` /
+      `Correlation-Id` headers. `debug_id` is on the exception and in `str()`,
+      since that's what PayPal support asks for.
+- [x] `client.py` — `PayPalClient` + `AsyncPayPalClient`, identical surface,
+      context managers, connection pooling, `PayPal-Request-Id` support,
+      one-shot token refresh + replay on 401, exponential backoff with jitter
+      honouring `Retry-After`.
+- [x] **Retry safety** (the point of the module): `POST`/`PATCH` are retried
+      *only* when the caller passed a `request_id`, because PayPal dedupes on
+      that header — otherwise a retried capture could charge twice. Same rule
+      applies to connection errors, since the request may have reached PayPal.
+      A 401 replay is exempt: nothing happened server-side.
+- [x] Tests: 101 total, **100% coverage incl. branches**. All HTTP goes through
+      an `httpx.MockTransport` (`tests/support.py::FakePayPal`) — no live or
+      sandbox calls anywhere.
+- [x] Docs: `configuration.rst` and `usage.rst` now document the real API
+      (settings reference, retry rules, error handling); `api_reference.rst`
+      autodocs config/client/auth/exceptions.
+
+**Verified locally**: 101 tests OK on **py3.14 + Django 6.0.7** *and*
+**py3.12 + Django 5.2.16** (both ends of the CI matrix); coverage 100%;
+Sphinx builds with 0 warnings.
+
+Deliberately deferred to M2 (not oversights): amount/currency formatting
+(`money.py`, incl. zero-decimal currencies), and any Orders-specific wrapper —
+M1 stops at the transport layer.
 
 ### M2 — one-off payments (Orders v2)
 - [ ] create / show / capture / authorize, `PayPal-Request-Id`
@@ -191,12 +226,17 @@ Still open, but none of them block M0/M1:
 - [x] Architecture and milestones drafted (this file).
 - [x] Decisions 1–5 taken with Elisa (2026-07-28); PyPI name availability verified.
 - [x] **M0 skeleton done** (2026-07-28), verified locally: install, tests, build,
-      `twine check`, docs, YAML all green. Nothing committed yet — the repo is
-      initialised on `main` with everything still unstaged.
+      `twine check`, docs, YAML all green. Committed on `main` as
+      `8dc2463 chore: project skeleton (M0)` (32 files). `CLAUDE.md` and
+      `.claude/` are gitignored.
+- [x] **M1 client + auth done** (2026-07-28), 100% covered, verified on both
+      ends of the CI matrix.
 - [ ] Create the GitHub repo `otto-torino/dj-paypal-checkout`, set up PyPI
-      Trusted Publishing and the `CODECOV_TOKEN` secret (CI uploads coverage).
+      Trusted Publishing and the `CODECOV_TOKEN` secret (CI uploads coverage
+      with `fail_ci_if_error: true`, so it fails until the token exists).
 - [ ] Consider renaming the working directory to `dj-paypal-checkout/`
       (currently `django-paypal/`, which no longer matches the package).
-- [ ] M1 — client + auth. Not started.
+- [ ] M2 — one-off payments (Orders v2). Not started. First steps: `money.py`
+      (Decimal ↔ PayPal amount strings), `orders.py`, then the models.
 
 *Reminder: semantic commits, subject only, no body, no Co-Authored-By trailer.*

@@ -6,10 +6,10 @@ checkout, refunds and **verified webhooks**, with models, signals and admin.
 
 .. warning::
 
-   **In development — not released yet.** The package is a skeleton; the
-   client, models and webhook handling are being implemented milestone by
-   milestone (see ``PROGRESS.md`` in the repository). Nothing here is usable
-   in production, and the API may change without notice until 0.1.0.
+   **In development — not released yet.** Configuration, authentication and
+   the sync/async HTTP clients are implemented; orders, models, signals and
+   webhook handling are not (see ``PROGRESS.md`` in the repository). The API
+   may change without notice until 0.1.0.
 
 Why not ``django-paypal``?
 --------------------------
