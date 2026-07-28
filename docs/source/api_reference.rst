@@ -3,8 +3,8 @@ API reference
 
 .. note::
 
-   Grows as the milestones land. Webhook handling, refunds and subscriptions are
-   not implemented yet.
+   Subscriptions, Vault and Card Fields are not implemented yet, so nothing is
+   documented for them here.
 
 Configuration
 -------------

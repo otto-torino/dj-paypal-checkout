@@ -362,7 +362,7 @@ Signals
 -------
 
 Business logic belongs here rather than in a view, so it runs the same way
-whether the outcome arrived from a capture call or (from M3) from a webhook:
+whether the outcome arrived from a capture call or from a webhook:
 
 .. code-block:: python
 
@@ -377,11 +377,12 @@ whether the outcome arrived from a capture call or (from M3) from a webhook:
 
 * ``payment_captured`` — money captured (``COMPLETED``)
 * ``payment_denied`` — refused (``DECLINED``/``FAILED``); no money moved
-* ``payment_refunded`` — from M4
+* ``payment_refunded`` — a capture was refunded, fully or partially
 
 All three send ``sender=Capture`` with ``capture``, ``order`` and ``target``
-(the linked object, or ``None``). A ``PENDING`` capture sends nothing: it is not
-an outcome yet.
+(the linked object, or ``None``); ``payment_refunded`` adds ``refund``, which is
+``None`` when a webhook reports a refund this project never initiated — so always
+accept ``**kwargs``. A ``PENDING`` capture sends nothing: it is not an outcome yet.
 
 **Handlers must be idempotent.** The same outcome can legitimately reach you
 twice — a capture call and its confirming webhook describe one event, and PayPal

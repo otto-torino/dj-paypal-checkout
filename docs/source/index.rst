@@ -4,12 +4,15 @@ dj-paypal-checkout
 A modern, REST-first PayPal integration for Django: PayPal **Orders v2**
 checkout, refunds and **verified webhooks**, with models, signals and admin.
 
-.. warning::
+.. note::
 
-   **In development — not released yet.** Configuration, authentication and
-   the sync/async HTTP clients are implemented; orders, models, signals and
-   webhook handling are not (see ``PROGRESS.md`` in the repository). The API
-   may change without notice until 0.1.0.
+   **Version 0.1.0.** One-off payments are covered end to end: Orders v2
+   create/authorize/capture, refunds and voids, verified webhooks, models that
+   survive an interrupted call, signals, a reconciliation command and a read-only
+   admin. Subscriptions, Vault and Card Fields are not implemented yet.
+
+   It has not been run against live PayPal traffic, and the API may still change
+   on minor versions before 1.0.
 
 Why not ``django-paypal``?
 --------------------------
@@ -22,7 +25,7 @@ This library targets the current REST APIs instead:
 * Orders v2 for checkout
 * Payments v2 for captures and refunds
 * Webhooks with signature verification (no IPN)
-* Subscriptions v1 (planned, after 0.1.0)
+* Subscriptions v1 (not implemented yet)
 
 .. toctree::
    :maxdepth: 2

@@ -1,10 +1,6 @@
 Installation
 ============
 
-.. note::
-
-   Not published on PyPI yet — install from the repository until 0.1.0.
-
 .. code-block:: bash
 
    pip install dj-paypal-checkout
