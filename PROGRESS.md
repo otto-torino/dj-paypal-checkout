@@ -413,12 +413,25 @@ Still open, but none of them block M0/M1:
       `.claude/` are gitignored.
 - [x] **M1 client + auth done** (2026-07-28), 100% covered, verified on both
       ends of the CI matrix.
+- [x] **M2 essentially done** (2026-07-28): money, idempotency policy, models,
+      orders (create/show/capture), authorize + authorization capture, signals,
+      admin, JS SDK v6 tags, runnable demo. **262 tests, 100% coverage incl.
+      branches**, green on py3.14/Django 6.0 *and* py3.12/Django 5.2, docs at 0
+      warnings, wheel verified (templates/templatetags/migrations packaged,
+      `example/` excluded). Left in M2: `void_authorization` (moved to M4 with
+      the refund work) and the `STRICT_IDEMPOTENCY` default flip (after M4).
 - [ ] Create the GitHub repo `otto-torino/dj-paypal-checkout`, set up PyPI
       Trusted Publishing and the `CODECOV_TOKEN` secret (CI uploads coverage
       with `fail_ci_if_error: true`, so it fails until the token exists).
 - [ ] Consider renaming the working directory to `dj-paypal-checkout/`
       (currently `django-paypal/`, which no longer matches the package).
-- [ ] M2 — one-off payments (Orders v2). Not started. First steps: `money.py`
-      (Decimal ↔ PayPal amount strings), `orders.py`, then the models.
+- [ ] **M3 — webhooks. Next.** Offline RSA-SHA256 verification (validate the
+      `PAYPAL-CERT-URL` host before fetching, cache the cert) with
+      `/v1/notifications/verify-webhook-signature` as fallback — that call is the
+      `Idempotency.NOT_APPLICABLE` case, and the transmission id is its natural
+      stable key. Then `WebhookEvent` + dedupe, `ProcessWebhookView` (raw body,
+      no middleware may consume it), handler registry → the existing signals.
+- [ ] M4 — refunds, `void_authorization`, re-sync command, then flip
+      `STRICT_IDEMPOTENCY` to `True` and release 0.1.0.
 
 *Reminder: semantic commits, subject only, no body, no Co-Authored-By trailer.*
