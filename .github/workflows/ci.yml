@@ -40,6 +40,11 @@ jobs:
         pip install -e ".[crypto]"
         pip install "Django~=${{ matrix.django-version }}.0" coverage
 
+    - name: Check for missing migrations
+      env:
+        DJANGO_SETTINGS_MODULE: tests.test_settings
+      run: python -m django makemigrations --check --dry-run
+
     - name: Run Tests and Generate Coverage Report
       run: |
         coverage run tests/runtests.py

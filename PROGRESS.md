@@ -288,11 +288,26 @@ Work items:
       loosen retry safety (pinned by a test). `REQUIRED` is flagged even on a
       safe method, since the policy describes the operation, not the verb. The
       HTTP heuristic is now only the fallback when nothing is declared.
+- [x] **`models.py` + `0001_initial` + `admin.py`** (2026-07-28). `PayPalOrder` and
+      `Capture`, both with a local-only `INITIATED` status so a row can exist
+      *before* PayPal is called — that is what makes an interrupted operation
+      discoverable instead of lost. `PayPalOrder.objects.start()` and
+      `order.start_capture()` write the row and its key in one transaction (the
+      key derives from the pk, which only exists after the insert).
+      `order.start_capture()` **reuses** an unconfirmed attempt rather than
+      duplicating it (recovery reuses the key, because it may have reached
+      PayPal) but gives a *new* attempt after a decline its own row and key.
+      The key is **stored**, not recomputed, so a future change to the naming
+      scheme cannot hand an in-flight recovery a different key. `live` is on the
+      row: sandbox and live records must never be read as interchangeable.
+      Generic FK (`object_id` is a Char, so UUID pks work) + `for_target()`.
+      Admin is deliberately read-only — a window for support ("which key did we
+      send?"), never an editor of payment state.
 - [ ] create / show / capture / authorize, with the `request_id` scheme above
       generated and persisted by the wrapper, never by the caller
+- [ ] signals (`payment_captured`, `payment_denied`, `payment_refunded`)
 - [ ] flip `STRICT_IDEMPOTENCY` to default `True` (before 0.1.0; now gated only
       on the wrappers, since the enum has landed)
-- [ ] `PayPalOrder`, `Capture` models (+ generic FK to the host order) + signals; admin
 - [ ] template tag for the JS SDK v6 script + button container
 - [ ] `example/` demo: cart → button → capture → order marked paid
 

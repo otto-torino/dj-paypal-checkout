@@ -36,6 +36,13 @@ Authentication
    :members:
    :member-order: bysource
 
+Models
+------
+
+.. automodule:: paypal_checkout.models
+   :members:
+   :member-order: bysource
+
 Exceptions
 ----------
 

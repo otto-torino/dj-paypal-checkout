@@ -26,6 +26,12 @@ Add the app to ``INSTALLED_APPS``:
        "paypal_checkout",
    ]
 
+Then run the migrations:
+
+.. code-block:: bash
+
+   python manage.py migrate paypal_checkout
+
 Requirements
 ------------
 
