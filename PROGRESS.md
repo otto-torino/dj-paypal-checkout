@@ -368,11 +368,46 @@ Work items:
       - No `run_demo.bat` (the sibling repos have one): I can't test a Windows
         script here, and a broken one is worse than none. Follow-up if wanted.
 
-### M3 — webhooks
-- [ ] offline verification + API fallback, `WebhookEvent` model, dedupe
-- [ ] `ProcessWebhookView` + handler registry → signals
-- [ ] docs: how to register the webhook and get its id into settings
-- [ ] tests with captured real payloads + tampered-signature cases
+### M3 — webhooks ✅ done 2026-07-28
+- [x] **`webhooks/verify.py`** — offline RSA-SHA256 over
+      `transmission_id|transmission_time|webhook_id|crc32(raw_body)` (algorithm
+      re-checked against PayPal's docs on 2026-07-28), plus the
+      `/v1/notifications/verify-webhook-signature` path. `PAYPAL-CERT-URL` is
+      validated as an HTTPS paypal.com host **before** anything is fetched —
+      without that a forged header points the verifier at the attacker's
+      certificate and every forgery passes; certificate cached for a day.
+      `signed_message()` refuses a non-bytes body, so the classic
+      re-serialisation bug cannot be written by accident.
+- [x] **No "offline then API" fallback**, deliberately: a signature that fails
+      must be rejected, never re-checked by a method that might say yes. The
+      fallback that *does* exist is only for "verification could not be
+      attempted" (no `cryptography`, cert unreachable) → refuse. Mode is
+      `PAYPAL['WEBHOOK_VERIFY_MODE']`, and `"auto"` is rejected by config
+      validation so nobody can ask for the unsafe thing.
+- [x] **`WebhookEvent` + dedupe** (migration `0003`). Unique `event_id` stops
+      double-processing; `processed_at` is the other half — a stored but
+      unprocessed row is *unfinished work*, not a duplicate to skip, so a retry
+      re-runs it. Same shape as the unconfirmed-capture rule.
+- [x] **`ProcessWebhookView`** with deliberate status codes: `400` untrustworthy
+      (nothing stored), `200` stored *and* finished (also for a true duplicate),
+      `500` stored but unfinished → PayPal retries. Answering `200` on a handler
+      failure would drop a payment confirmation for good.
+      - The race is now safe: if a webhook overtakes our own capture response the
+        handler raises `PayPalWebhookNotReady` → `500` → PayPal's retry finds the
+        row and succeeds. Free reconciliation. A capture we don't know *and*
+        whose order we don't know is someone else's integration → ignored.
+- [x] **Handler registry** → the existing signals, for capture
+      completed/denied/pending/refunded, order approved/completed and
+      authorization created/voided. Unhandled types are stored and acked, not
+      errors. `register_handler` is public for project-specific events.
+- [x] Read-only `WebhookEventAdmin` (processed flag, `last_error`, transmission id).
+- [x] Tests: **337 total, 100% coverage incl. branches.** Verification is tested
+      with a **real RSA key and certificate** generated in-process, not a stubbed
+      "signature ok": genuine signature passes; tampered body, tampered
+      signature, non-base64 signature, another webhook id and a replayed
+      transmission id all fail; `paypal.com.evil.example` is refused.
+- [x] Docs: new `webhooks.rst` (setup, the two modes, the status-code contract,
+      custom handlers, reconciling), plus the endpoint wired into the demo.
 
 ### M4 — refunds & reconciliation
 - [ ] refunds (full/partial), `Refund` model, `payment_refunded` signal
@@ -425,13 +460,11 @@ Still open, but none of them block M0/M1:
       with `fail_ci_if_error: true`, so it fails until the token exists).
 - [ ] Consider renaming the working directory to `dj-paypal-checkout/`
       (currently `django-paypal/`, which no longer matches the package).
-- [ ] **M3 — webhooks. Next.** Offline RSA-SHA256 verification (validate the
-      `PAYPAL-CERT-URL` host before fetching, cache the cert) with
-      `/v1/notifications/verify-webhook-signature` as fallback — that call is the
-      `Idempotency.NOT_APPLICABLE` case, and the transmission id is its natural
-      stable key. Then `WebhookEvent` + dedupe, `ProcessWebhookView` (raw body,
-      no middleware may consume it), handler registry → the existing signals.
-- [ ] M4 — refunds, `void_authorization`, re-sync command, then flip
+- [x] **M3 webhooks done** (2026-07-28). 337 tests, 100% coverage, verification
+      tested against real RSA signatures.
+- [ ] **M4 — next.** Refunds (`payments.py` + `Refund` model, reusing the
+      per-attempt key scheme `order:<pk>:refund:<refund_pk>`),
+      `void_authorization`, a re-sync management command, then flip
       `STRICT_IDEMPOTENCY` to `True` and release 0.1.0.
 
 *Reminder: semantic commits, subject only, no body, no Co-Authored-By trailer.*

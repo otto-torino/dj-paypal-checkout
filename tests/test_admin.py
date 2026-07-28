@@ -11,8 +11,9 @@ from paypal_checkout.admin import (
     CaptureAdmin,
     CaptureInline,
     PayPalOrderAdmin,
+    WebhookEventAdmin,
 )
-from paypal_checkout.models import Authorization, Capture, PayPalOrder
+from paypal_checkout.models import Authorization, Capture, PayPalOrder, WebhookEvent
 
 
 class AdminRegistrationTests(TestCase):
@@ -21,6 +22,9 @@ class AdminRegistrationTests(TestCase):
         self.assertIsInstance(django_admin.site._registry[Capture], CaptureAdmin)
         self.assertIsInstance(
             django_admin.site._registry[Authorization], AuthorizationAdmin
+        )
+        self.assertIsInstance(
+            django_admin.site._registry[WebhookEvent], WebhookEventAdmin
         )
 
 
@@ -31,6 +35,7 @@ class ReadOnlyTests(TestCase):
             PayPalOrderAdmin(PayPalOrder, django_admin.site),
             AuthorizationAdmin(Authorization, django_admin.site),
             CaptureAdmin(Capture, django_admin.site),
+            WebhookEventAdmin(WebhookEvent, django_admin.site),
         )
         self.inlines = (
             CaptureInline(PayPalOrder, django_admin.site),
@@ -60,9 +65,17 @@ class ReadOnlyTests(TestCase):
     def test_request_id_is_visible_for_support(self):
         """Answering "which key did we send?" is the point of this admin."""
         for model_admin in self.admins:
+            if model_admin.model is WebhookEvent:
+                continue  # inbound: no key of ours, but the transmission id
             with self.subTest(admin=type(model_admin).__name__):
                 self.assertIn("request_id", model_admin.readonly_fields)
                 self.assertIn("request_id", model_admin.search_fields)
+
+    def test_webhook_events_expose_their_transmission_id(self):
+        webhook_admin = WebhookEventAdmin(WebhookEvent, django_admin.site)
+        self.assertIn("transmission_id", webhook_admin.readonly_fields)
+        self.assertIn("transmission_id", webhook_admin.search_fields)
+        self.assertIn("last_error", webhook_admin.readonly_fields)
 
 
 class EnvironmentColumnTests(TestCase):
@@ -75,3 +88,15 @@ class EnvironmentColumnTests(TestCase):
 
         self.assertEqual(self.order_admin.environment(sandbox), "sandbox")
         self.assertEqual(self.order_admin.environment(live), "live")
+
+    def test_webhook_events_show_environment_and_processed_state(self):
+        webhook_admin = WebhookEventAdmin(WebhookEvent, django_admin.site)
+        event = WebhookEvent.objects.create(
+            event_id="WH-1", event_type="PAYMENT.CAPTURE.COMPLETED", live=True
+        )
+
+        self.assertEqual(webhook_admin.environment(event), "live")
+        self.assertFalse(webhook_admin.processed(event))
+
+        event.mark_processed()
+        self.assertTrue(webhook_admin.processed(event))

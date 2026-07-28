@@ -67,6 +67,9 @@ PAYPAL = {
     "CLIENT_SECRET": os.environ.get("PAYPAL_CLIENT_SECRET", ""),
     "LIVE": False,
     "CURRENCY": "EUR",
+    # Needed to verify webhook signatures. Register /paypal/webhook/ in the
+    # dashboard (a tunnel like ngrok works for local testing) and paste the id.
+    "WEBHOOK_ID": os.environ.get("PAYPAL_WEBHOOK_ID", ""),
     # The posture the library is heading towards: on in every environment, so a
     # call site that forgets its idempotency key fails loudly instead of quietly.
     "STRICT_IDEMPOTENCY": True,

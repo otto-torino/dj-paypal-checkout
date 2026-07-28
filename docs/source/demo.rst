@@ -39,6 +39,22 @@ the order helpers satisfy by construction.
 The checkout page also lists the local ``PayPalOrder`` rows with their
 idempotency keys, so you can watch a row appear *before* PayPal is called.
 
+Webhooks
+--------
+
+``/paypal/webhook/`` is mounted and ready. To exercise it locally, expose the
+server through a tunnel, register that URL in the dashboard, and set the id it
+returns:
+
+.. code-block:: bash
+
+   export PAYPAL_WEBHOOK_ID=...
+
+Then watch the ``WebhookEvent`` rows in the admin: ``processed`` and
+``last_error`` show exactly what happened, and the same
+``payment_captured`` receiver runs whether the confirmation arrived from the
+capture call or from the webhook. See :doc:`webhooks`.
+
 Testing a payment
 -----------------
 

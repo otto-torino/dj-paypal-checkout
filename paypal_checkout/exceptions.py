@@ -12,6 +12,8 @@ __all__ = [
     "PayPalConfigurationError",
     "PayPalIdempotencyError",
     "PayPalAmountError",
+    "PayPalWebhookError",
+    "PayPalWebhookNotReady",
     "PayPalConnectionError",
     "PayPalAPIError",
     "PayPalAuthenticationError",
@@ -47,6 +49,21 @@ class PayPalAmountError(PayPalError, ValueError):
 
     A ``ValueError`` too, since it always signals a bad value at the call site
     (a float amount, a negative, precision that would have to be dropped).
+    """
+
+
+class PayPalWebhookError(PayPalError):
+    """A webhook could not be accepted: missing headers, or an unverifiable
+    signature."""
+
+
+class PayPalWebhookNotReady(PayPalError):
+    """The event is ours, but the local row it refers to is not there yet.
+
+    Happens when a webhook overtakes the API response that created the row.
+    Raising this makes the endpoint answer 5xx so PayPal retries later, which is
+    free reconciliation — the alternative would be silently dropping a payment
+    confirmation.
     """
 
 

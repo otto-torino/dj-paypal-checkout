@@ -16,10 +16,14 @@ __all__ = [
     "get_config",
     "SANDBOX_BASE_URL",
     "LIVE_BASE_URL",
+    "WEBHOOK_VERIFY_MODES",
 ]
 
 SANDBOX_BASE_URL = "https://api-m.sandbox.paypal.com"
 LIVE_BASE_URL = "https://api-m.paypal.com"
+
+#: Accepted values for ``PAYPAL['WEBHOOK_VERIFY_MODE']``.
+WEBHOOK_VERIFY_MODES = frozenset({"offline", "api"})
 
 SETTINGS_KEY = "PAYPAL"
 
@@ -35,6 +39,7 @@ _ALIASES = {
     "MAX_RETRIES": "max_retries",
     "RETRY_BACKOFF": "retry_backoff",
     "STRICT_IDEMPOTENCY": "strict_idempotency",
+    "WEBHOOK_VERIFY_MODE": "webhook_verify_mode",
     "CACHE_ALIAS": "cache_alias",
     "TOKEN_LEEWAY": "token_leeway",
 }
@@ -76,6 +81,11 @@ class PayPalConfig:
     #: once, and a single attempt is always safe.
     strict_idempotency: bool = False
 
+    #: ``"offline"`` verifies webhook signatures locally (needs the ``crypto``
+    #: extra); ``"api"`` asks PayPal. There is no automatic fallback: a failed
+    #: signature must never be re-checked by another method.
+    webhook_verify_mode: str = "offline"
+
     #: Django cache alias used to store OAuth access tokens.
     cache_alias: str = "default"
 
@@ -108,7 +118,14 @@ class PayPalConfig:
 def _coerce(name, value):
     """Coerce and validate a single field, raising a helpful error if invalid."""
     setting = f"{SETTINGS_KEY}['{name.upper()}']"
-    if name in {"client_id", "client_secret", "webhook_id", "currency", "cache_alias"}:
+    if name in {
+        "client_id",
+        "client_secret",
+        "webhook_id",
+        "currency",
+        "cache_alias",
+        "webhook_verify_mode",
+    }:
         if not isinstance(value, str):
             raise PayPalConfigurationError(f"{setting} must be a string, got {type(value).__name__}.")
         return value.strip()
@@ -182,5 +199,11 @@ def get_config(**overrides):
         raise PayPalConfigurationError(
             f"{SETTINGS_KEY}['CURRENCY'] must be a 3-letter ISO-4217 code, "
             f"got {config.currency!r}."
+        )
+    if config.webhook_verify_mode not in WEBHOOK_VERIFY_MODES:
+        raise PayPalConfigurationError(
+            f"{SETTINGS_KEY}['WEBHOOK_VERIFY_MODE'] must be one of "
+            f"{', '.join(sorted(WEBHOOK_VERIFY_MODES))}, got "
+            f"{config.webhook_verify_mode!r}."
         )
     return config.replace(currency=config.currency.upper())

@@ -1,6 +1,7 @@
-"""URLconf for the test project.
+"""URLconf for the test project."""
 
-Empty until M3 mounts the webhook view here.
-"""
+from django.urls import include, path
 
-urlpatterns = []
+urlpatterns = [
+    path("paypal/", include("paypal_checkout.urls")),
+]

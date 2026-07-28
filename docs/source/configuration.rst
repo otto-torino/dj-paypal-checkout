@@ -28,22 +28,24 @@ Never commit credentials. Read them from the environment.
 Reference
 ---------
 
-================== ============== =============================================
-Key                Default        Meaning
-================== ============== =============================================
-CLIENT_ID          *(required)*   PayPal REST app client id.
-CLIENT_SECRET      *(required)*   PayPal REST app secret.
-LIVE               ``False``      ``True`` targets the live API, not sandbox.
-WEBHOOK_ID         ``""``         Registered webhook id, to verify signatures.
-CURRENCY           ``"EUR"``      Default currency, 3-letter ISO-4217 code.
-TIMEOUT            ``30.0``       Per-request timeout in seconds.
-MAX_RETRIES        ``2``          Extra attempts for requests safe to repeat.
-RETRY_BACKOFF      ``0.5``        Base of the exponential backoff, in seconds.
-STRICT_IDEMPOTENCY ``False``      Raise instead of warning on a write with no
-                                  ``request_id`` (see below).
-CACHE_ALIAS        ``"default"``  Django cache alias storing access tokens.
-TOKEN_LEEWAY       ``300``        Refresh the token this long before expiry.
-================== ============== =============================================
+==================== ============== ===========================================
+Key                  Default        Meaning
+==================== ============== ===========================================
+CLIENT_ID            *(required)*   PayPal REST app client id.
+CLIENT_SECRET        *(required)*   PayPal REST app secret.
+LIVE                 ``False``      ``True`` targets the live API, not sandbox.
+WEBHOOK_ID           ``""``         Registered webhook id, to verify signatures.
+CURRENCY             ``"EUR"``      Default currency, 3-letter ISO-4217 code.
+TIMEOUT              ``30.0``       Per-request timeout in seconds.
+MAX_RETRIES          ``2``          Extra attempts for requests safe to repeat.
+RETRY_BACKOFF        ``0.5``        Base of the exponential backoff, in seconds.
+STRICT_IDEMPOTENCY   ``False``      Raise instead of warning on a write with no
+                                    ``request_id`` (see below).
+WEBHOOK_VERIFY_MODE  ``"offline"``  Verify signatures locally, or ``"api"`` to
+                                    ask PayPal. See :doc:`webhooks`.
+CACHE_ALIAS          ``"default"``  Django cache alias storing access tokens.
+TOKEN_LEEWAY         ``300``        Refresh the token this long before expiry.
+==================== ============== ===========================================
 
 Misconfiguration raises
 :class:`~paypal_checkout.exceptions.PayPalConfigurationError`, which is also an

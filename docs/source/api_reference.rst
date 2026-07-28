@@ -56,6 +56,20 @@ Signals
 .. automodule:: paypal_checkout.signals
    :members:
 
+Webhooks
+--------
+
+.. automodule:: paypal_checkout.webhooks.verify
+   :members:
+   :member-order: bysource
+
+.. automodule:: paypal_checkout.webhooks.handlers
+   :members:
+   :member-order: bysource
+
+.. automodule:: paypal_checkout.webhooks.views
+   :members:
+
 Exceptions
 ----------
 

@@ -111,6 +111,20 @@ class GetConfigTests(SimpleTestCase):
     def test_strict_idempotency_is_off_by_default(self):
         self.assertIs(get_config().strict_idempotency, False)
 
+    @override_settings(PAYPAL={**MINIMAL, "WEBHOOK_VERIFY_MODE": "api"})
+    def test_webhook_verify_mode_can_be_api(self):
+        self.assertEqual(get_config().webhook_verify_mode, "api")
+
+    @override_settings(PAYPAL=MINIMAL)
+    def test_webhook_verify_mode_defaults_to_offline(self):
+        self.assertEqual(get_config().webhook_verify_mode, "offline")
+
+    @override_settings(PAYPAL={**MINIMAL, "WEBHOOK_VERIFY_MODE": "auto"})
+    def test_unknown_webhook_verify_mode_is_refused(self):
+        """There is no 'try offline then ask the API' mode, by design."""
+        with self.assertRaisesMessage(PayPalConfigurationError, "WEBHOOK_VERIFY_MODE"):
+            get_config()
+
     @override_settings(PAYPAL=MINIMAL)
     def test_overrides_win_over_settings(self):
         config = get_config(client_id="other", live=True)

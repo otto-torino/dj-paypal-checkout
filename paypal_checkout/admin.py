@@ -7,7 +7,7 @@ idempotency key?"), not to let anyone hand-edit payment state.
 
 from django.contrib import admin
 
-from .models import Authorization, Capture, PayPalOrder
+from .models import Authorization, Capture, PayPalOrder, WebhookEvent
 
 
 class ReadOnlyInline(admin.TabularInline):
@@ -131,6 +131,53 @@ class CaptureAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
     )
+
+    def get_fields(self, request, obj=None):
+        return self.readonly_fields
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(WebhookEvent)
+class WebhookEventAdmin(admin.ModelAdmin):
+    list_display = (
+        "event_id",
+        "event_type",
+        "processed",
+        "environment",
+        "received_at",
+    )
+    list_filter = ("event_type", "live", "resource_type")
+    search_fields = ("event_id", "transmission_id", "event_type", "summary")
+    date_hierarchy = "received_at"
+    readonly_fields = (
+        "event_id",
+        "event_type",
+        "resource_type",
+        "summary",
+        "transmission_id",
+        "live",
+        "occurred_at",
+        "received_at",
+        "processed_at",
+        "last_error",
+        "payload",
+    )
+
+    @admin.display(boolean=True, description="Processed", ordering="processed_at")
+    def processed(self, obj):
+        return obj.is_processed
+
+    @admin.display(description="Environment", ordering="live")
+    def environment(self, obj):
+        return "live" if obj.live else "sandbox"
 
     def get_fields(self, request, obj=None):
         return self.readonly_fields

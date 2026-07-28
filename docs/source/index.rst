@@ -31,6 +31,7 @@ This library targets the current REST APIs instead:
    installation
    configuration
    usage
+   webhooks
    demo
    api_reference
 

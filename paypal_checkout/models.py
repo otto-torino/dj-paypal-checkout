@@ -18,9 +18,10 @@ be traced back to a cart, an invoice, a subscription row, whatever it is.
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import models, transaction
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-__all__ = ["PayPalOrder", "Authorization", "Capture"]
+__all__ = ["PayPalOrder", "Authorization", "Capture", "WebhookEvent"]
 
 
 def order_request_id(order_pk):
@@ -412,4 +413,59 @@ class Capture(PendingAttemptMixin):
                     "updated_at",
                 ]
             )
+        return self
+
+
+class WebhookEvent(models.Model):
+    """A webhook PayPal delivered, and whether we finished acting on it.
+
+    ``event_id`` is unique, which is what stops a retried delivery from being
+    processed twice. ``processed_at`` is the other half: a row that exists but
+    was never processed is *not* a duplicate to skip — it is unfinished work, so
+    a retry is allowed to pick it up. Same reasoning as an unconfirmed capture.
+    """
+
+    event_id = models.CharField(
+        max_length=64, unique=True, help_text="PayPal's event id — the dedupe key."
+    )
+    event_type = models.CharField(max_length=64, db_index=True)
+    resource_type = models.CharField(max_length=64, blank=True)
+    summary = models.TextField(blank=True)
+    transmission_id = models.CharField(max_length=64, blank=True)
+    live = models.BooleanField(default=False)
+    payload = models.JSONField(default=dict, blank=True)
+    occurred_at = models.DateTimeField(
+        null=True, blank=True, help_text="PayPal's create_time for the event."
+    )
+    received_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-received_at",)
+        indexes = [models.Index(fields=("processed_at",))]
+
+    def __str__(self):
+        return f"{self.event_type} {self.event_id}"
+
+    @property
+    def is_processed(self):
+        return self.processed_at is not None
+
+    @property
+    def resource(self):
+        """The event's ``resource`` object, or an empty dict."""
+        resource = self.payload.get("resource")
+        return resource if isinstance(resource, dict) else {}
+
+    def mark_processed(self):
+        self.processed_at = timezone.now()
+        self.last_error = ""
+        self.save(update_fields=["processed_at", "last_error"])
+        return self
+
+    def mark_failed(self, error):
+        self.processed_at = None
+        self.last_error = str(error)[:2000]
+        self.save(update_fields=["processed_at", "last_error"])
         return self
