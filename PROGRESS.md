@@ -217,11 +217,30 @@ deliberately *sharp*. Requirements:
   PayPal blips on a bare `client.post()` turn into manual reconciliation. The
   wrappers are what remove that cost, by always supplying a persisted id.
 - **Decided** (Elisa's "modalità più rigorosa", refined): a mutating request with
-  no `request_id` is *reported*, not refused — `logger.warning` on
+  no `request_id` is *reported* — structured `logger.warning` on
   `paypal_checkout.client` — and `PAYPAL['STRICT_IDEMPOTENCY'] = True` promotes it
   to `PayPalIdempotencyError`, raised **before** anything is sent (not even the
-  token request). Intended for dev/CI/staging. Two deviations from the original
-  proposal, both deliberate:
+  token request).
+- **Target state: strict on in *every* environment, production included.** An
+  earlier draft of the docs said "use it everywhere except production" — that was
+  wrong, and Elisa caught it: CI would then validate a guarantee production does
+  not have, and the divergence is itself the bug. The warning is a **migration
+  phase**, not the production posture. Sequence: warning everywhere (now) →
+  strict in tests/CI from day one → strict in production once every call path
+  supplies a persisted id (M2 wrappers) → turning it off only as a temporary,
+  *alerted* measure. `STRICT_IDEMPOTENCY` defaults to `False` only because those
+  wrappers don't exist yet; **flip the default to `True` before 0.1.0** (free
+  now, breaking later — nothing is released).
+- **Observability, not prose.** A plain warning gets filtered and ignored, so the
+  record carries `paypal_method`, `paypal_endpoint`, `paypal_issue` as
+  `LogRecord` attributes, ready to drive a metric. `paypal_endpoint` is
+  templated and id-free (`/v2/checkout/orders/{id}/capture` via
+  `client.endpoint_label`), so it is low-cardinality and holds no
+  per-transaction identifier. Body, credentials, headers and query string are
+  never logged — pinned by a test that asserts a card number, the client secret,
+  the client id and a query value are all absent from the record.
+
+  Two deviations from the original proposal, both deliberate:
   - **Not coupled to `max_retries` as a validity condition.** Making a call
     *invalid* because of a transport tuning knob means the same code raises in
     one project's settings and works in another's; bumping `MAX_RETRIES` from 0
@@ -233,14 +252,32 @@ deliberately *sharp*. Requirements:
     the alternative is a *single* attempt, which is always safe. Refusing to
     attempt a capture at all converts ~99% success into 100% failure. So it is
     a dev/CI lint, not a runtime policy.
-  - Also worth noting: the "mutating ⇒ needs a key" rule is not universal —
-    side-effect-free POSTs exist (e.g. `/v1/notifications/verify-webhook-signature`,
-    which M3 will call). Our own M3 call can use the transmission id as a natural
-    stable key, but a hard universal rule would misfire on a caller's harmless POST.
+- **Per-operation policy replaces the HTTP heuristic (agreed direction).**
+  "Mutating method ⇒ needs a key" is a heuristic, and
+  `/v1/notifications/verify-webhook-signature` (a side-effect-free POST that M3
+  calls) is the proof: strict mode would flag a false positive. The end state is
+  an explicit policy attached to the *operation*, not inferred from the verb:
+
+  ```python
+  class Idempotency(Enum):
+      REQUIRED        # capture, refund, order create — strict mode enforces a key
+      OPTIONAL        # a key helps but its absence is not a defect
+      NOT_APPLICABLE  # side-effect-free POST (verify-webhook-signature)
+  ```
+
+  Each wrapper function declares its own value; `client.request()` accepts it as
+  a parameter, and the method heuristic stays only as the fallback for callers
+  driving the raw client. Land it together with the wrappers, since declaring
+  policies before there is anything to declare them on would be unused API.
+  Note this is also what makes "strict on in production" safe: without it, a
+  caller's harmless POST would be refused.
 
 Work items:
 - [ ] create / show / capture / authorize, with the `request_id` scheme above
       generated and persisted by the wrapper, never by the caller
+- [ ] `Idempotency` enum + `client.request(..., idempotency=...)`; wrappers declare
+      their policy, the method heuristic demoted to a fallback
+- [ ] flip `STRICT_IDEMPOTENCY` to default `True` (do it before 0.1.0)
 - [ ] `PayPalOrder`, `Capture` models (+ generic FK to the host order) + signals; admin
 - [ ] template tag for the JS SDK v6 script + button container
 - [ ] `example/` demo: cart → button → capture → order marked paid

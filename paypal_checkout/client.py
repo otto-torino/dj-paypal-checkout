@@ -14,6 +14,7 @@ uses to deduplicate. Without it, a failed POST is raised, never repeated.
 import asyncio
 import logging
 import random
+import re
 import time
 
 import httpx
@@ -42,11 +43,31 @@ RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 MAX_BACKOFF = 30.0
 
 
+#: ``v1``/``v2``/``v3`` are version segments, not resource ids.
+_VERSION_SEGMENT = re.compile(r"^v\d+$")
+
+
 def _user_agent():
     # Imported lazily to avoid a circular import at package init time.
     from . import __version__
 
     return f"dj-paypal-checkout/{__version__}"
+
+
+def endpoint_label(url):
+    """Templated path for logs and metrics: ``/v2/checkout/orders/{id}/capture``.
+
+    Resource ids are replaced so the label has low cardinality (usable as a
+    metric dimension) and carries no per-transaction identifiers.
+    """
+    path = httpx.URL(url).path if "//" in str(url) else str(url)
+    segments = []
+    for segment in path.strip("/").split("/"):
+        if segment and not _VERSION_SEGMENT.match(segment) and any(c.isdigit() for c in segment):
+            segments.append("{id}")
+        else:
+            segments.append(segment)
+    return "/" + "/".join(segments)
 
 
 class _BasePayPalClient:
@@ -87,13 +108,17 @@ class _BasePayPalClient:
             return True
         return bool(request_id)
 
-    def _check_idempotency(self, method, request_id):
+    def _check_idempotency(self, method, url, request_id):
         """Report a mutating request that cannot be retried safely.
 
-        Deliberately *not* a refusal by default: a single attempt is always
-        safe, and declining to even try a capture is worse than trying it once.
-        The point is to make the missing key visible — as a warning normally,
-        as an error when ``STRICT_IDEMPOTENCY`` is on (dev/CI/staging).
+        With ``STRICT_IDEMPOTENCY`` on this raises before any I/O happens; the
+        warning is the *migration* path towards that, not the intended
+        end state (see PROGRESS.md).
+
+        The warning is structured — ``paypal_method``, ``paypal_endpoint`` (a
+        templated, id-free path) and ``paypal_issue`` land on the ``LogRecord``
+        so it can drive a metric instead of being filtered away as prose. No
+        request body, credentials, headers or query string are ever logged.
 
         Silent when retries are disabled entirely, since then there is no
         retry for the missing key to make unsafe.
@@ -102,15 +127,24 @@ class _BasePayPalClient:
             return
         if self._is_safe_to_retry(method, request_id):
             return
+
+        endpoint = endpoint_label(url)
         message = (
-            f"{method} without a request_id: this write cannot be retried safely "
-            "and will be raised on the first failure. Pass request_id with an id "
-            "that is stable for this operation and persisted before the call "
+            f"{method} {endpoint} without a request_id: this write cannot be retried "
+            "safely and will be raised on the first failure. Pass request_id with an "
+            "id that is stable for this operation and persisted before the call "
             "(e.g. 'order:42:capture:1')."
         )
         if self.config.strict_idempotency:
             raise PayPalIdempotencyError(message)
-        logger.warning(message)
+        logger.warning(
+            message,
+            extra={
+                "paypal_method": method,
+                "paypal_endpoint": endpoint,
+                "paypal_issue": "missing_request_id",
+            },
+        )
 
     def _should_retry_status(self, status_code, method, request_id, attempt):
         if attempt >= self.config.max_retries:
@@ -195,8 +229,9 @@ class PayPalClient(_BasePayPalClient):
         was obtained.
         """
         method = method.upper()
-        self._check_idempotency(method, request_id)
         url = self._url(path)
+        # Before any I/O: strict mode must refuse without touching the network.
+        self._check_idempotency(method, url, request_id)
         attempt = 0
         token_refreshed = False
         force_refresh = False
@@ -287,8 +322,9 @@ class AsyncPayPalClient(_BasePayPalClient):
         authenticate=True,
     ):
         method = method.upper()
-        self._check_idempotency(method, request_id)
         url = self._url(path)
+        # Before any I/O: strict mode must refuse without touching the network.
+        self._check_idempotency(method, url, request_id)
         attempt = 0
         token_refreshed = False
         force_refresh = False

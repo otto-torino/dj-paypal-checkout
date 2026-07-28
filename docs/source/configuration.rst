@@ -67,24 +67,73 @@ code path that can pick the wrong environment:
 Strict idempotency
 ------------------
 
-A mutating request sent without ``request_id`` cannot be retried safely, so the
-client logs a warning on the ``paypal_checkout.client`` logger and carries on
-with a single attempt. Turning ``STRICT_IDEMPOTENCY`` on promotes that warning
-to a :class:`~paypal_checkout.exceptions.PayPalIdempotencyError`, raised
-*before* anything reaches PayPal:
+A mutating request sent without ``request_id`` cannot be retried safely. By
+default the client reports it and carries on with a single attempt; turning
+``STRICT_IDEMPOTENCY`` on promotes the report to a
+:class:`~paypal_checkout.exceptions.PayPalIdempotencyError`, raised *before*
+anything reaches PayPal — not even the token request.
+
+**The target is strict on in every environment, production included.** Running
+strict in CI but not in production would mean a green test suite validating a
+guarantee production does not have — the divergence is the bug, not the
+protection. So:
 
 .. code-block:: python
 
-   # settings/dev.py, settings/ci.py, settings/staging.py
-   PAYPAL = {**PAYPAL, "STRICT_IDEMPOTENCY": True}
+   # settings/base.py — same value everywhere
+   PAYPAL = {..., "STRICT_IDEMPOTENCY": True}
 
-Use it everywhere except production, so a call site that forgot its
-``request_id`` is caught by a test rather than by a PayPal outage. It is off by
-default on purpose: refusing to even attempt a capture is worse than attempting
-it once, and a single attempt is always safe.
+The recommended sequence to get there:
+
+1. **Warning on, everywhere** — this is the default, and it is a *migration
+   phase*, not the intended end state.
+2. **Strict in tests and CI from day one**, so a call site that forgets its
+   ``request_id`` fails a test.
+3. **Strict in production** as soon as every call path supplies a persisted id
+   (which the order/payment helpers will do for you — M2).
+4. **Turning it off is a temporary, observable measure**, never a resting state:
+   if you have to, alert on the warnings below so the exception is visible.
+
+The default is ``False`` only because those helpers do not exist yet; it will
+flip to ``True`` before 0.1.0.
 
 Both the warning and the error are silent when ``MAX_RETRIES`` is ``0`` — with
 retries disabled there is no retry for a missing key to make unsafe.
+
+Observability
+-------------
+
+A plain warning is easy to filter out and ignore, so the record is structured:
+``paypal_method``, ``paypal_endpoint`` and ``paypal_issue`` are attached to the
+``LogRecord``, which makes it usable as a metric rather than as prose.
+
+``paypal_endpoint`` is a templated, id-free path
+(``/v2/checkout/orders/{id}/capture``), so it has low cardinality and carries no
+per-transaction identifier. **No request body, credentials, headers or query
+string are ever logged.**
+
+.. code-block:: python
+
+   import logging
+
+   class IdempotencyMetric(logging.Filter):
+       def filter(self, record):
+           issue = getattr(record, "paypal_issue", None)
+           if issue:
+               statsd.increment(
+                   f"paypal.{issue}",
+                   tags=[f"method:{record.paypal_method}",
+                         f"endpoint:{record.paypal_endpoint}"],
+               )
+           return True
+
+   LOGGING = {
+       "version": 1,
+       "filters": {"paypal_metric": {"()": IdempotencyMetric}},
+       "loggers": {
+           "paypal_checkout.client": {"level": "WARNING", "filters": ["paypal_metric"]},
+       },
+   }
 
 Multiple accounts
 -----------------

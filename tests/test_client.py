@@ -3,7 +3,7 @@ from django.core.cache import cache
 from django.test import SimpleTestCase
 
 from paypal_checkout import __version__
-from paypal_checkout.client import AsyncPayPalClient, PayPalClient
+from paypal_checkout.client import AsyncPayPalClient, PayPalClient, endpoint_label
 from paypal_checkout.exceptions import (
     PayPalAPIError,
     PayPalAuthenticationError,
@@ -134,6 +134,35 @@ class BackoffTests(SimpleTestCase):
         self.assertLessEqual(client._backoff(20), 30.0)
 
 
+class EndpointLabelTests(SimpleTestCase):
+    """Labels must be low-cardinality and free of per-transaction ids."""
+
+    def test_ids_are_templated_out(self):
+        self.assertEqual(
+            endpoint_label("/v2/checkout/orders/5O190127TN364715T/capture"),
+            "/v2/checkout/orders/{id}/capture",
+        )
+
+    def test_version_segments_are_kept(self):
+        self.assertEqual(endpoint_label("/v2/checkout/orders"), "/v2/checkout/orders")
+        self.assertEqual(
+            endpoint_label("/v1/notifications/verify-webhook-signature"),
+            "/v1/notifications/verify-webhook-signature",
+        )
+
+    def test_absolute_urls_are_reduced_to_the_path(self):
+        self.assertEqual(
+            endpoint_label("https://api-m.sandbox.paypal.com/v2/payments/captures/2GG279541U47/refund"),
+            "/v2/payments/captures/{id}/refund",
+        )
+
+    def test_query_strings_are_dropped(self):
+        self.assertEqual(
+            endpoint_label("https://api-m.sandbox.paypal.com/v1/billing/plans?page=2"),
+            "/v1/billing/plans",
+        )
+
+
 class IdempotencyDiagnosticsTests(SimpleTestCase):
     """A missing request_id must be visible, without refusing safe work."""
 
@@ -146,8 +175,31 @@ class IdempotencyDiagnosticsTests(SimpleTestCase):
             with self.assertLogs("paypal_checkout.client", level="WARNING") as logs:
                 client.post(ORDERS, json={})
 
-        self.assertIn("POST without a request_id", logs.output[0])
+        self.assertIn("POST /v2/checkout/orders without a request_id", logs.output[0])
         self.assertEqual(len(fake.api_requests()), 1, "the call still goes through")
+
+    def test_warning_is_structured_for_metrics(self):
+        fake = FakePayPal().queue(f"{ORDERS}/5O1/capture", httpx.Response(201, json={}))
+        with PayPalClient(make_config(), transport=fake.transport) as client:
+            with self.assertLogs("paypal_checkout.client", level="WARNING") as logs:
+                client.post(f"{ORDERS}/5O1/capture", json={})
+
+        record = logs.records[0]
+        self.assertEqual(record.paypal_method, "POST")
+        self.assertEqual(record.paypal_endpoint, "/v2/checkout/orders/{id}/capture")
+        self.assertEqual(record.paypal_issue, "missing_request_id")
+
+    def test_nothing_sensitive_is_logged(self):
+        """No body, credentials, headers or query string in the record."""
+        config = make_config(client_secret="super-secret")
+        fake = FakePayPal().queue(ORDERS, httpx.Response(201, json={}))
+        with PayPalClient(config, transport=fake.transport) as client:
+            with self.assertLogs("paypal_checkout.client", level="WARNING") as logs:
+                client.post(ORDERS, json={"card": {"number": "4111111111111111"}}, params={"t": "tok"})
+
+        blob = f"{logs.output[0]} {logs.records[0].__dict__}"
+        for secret in ("4111111111111111", "super-secret", config.client_id, "tok"):
+            self.assertNotIn(secret, blob)
 
     def test_write_with_request_id_is_silent(self):
         fake = FakePayPal().queue(ORDERS, httpx.Response(201, json={}))
@@ -535,7 +587,8 @@ class AsyncClientTests(SimpleTestCase):
             with self.assertLogs("paypal_checkout.client", level="WARNING") as logs:
                 await client.post(ORDERS, json={})
 
-        self.assertIn("POST without a request_id", logs.output[0])
+        self.assertIn("POST /v2/checkout/orders without a request_id", logs.output[0])
+        self.assertEqual(logs.records[0].paypal_issue, "missing_request_id")
 
     async def test_strict_mode_raises_before_sending_anything(self):
         fake = FakePayPal()
