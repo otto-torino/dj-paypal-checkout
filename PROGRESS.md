@@ -339,7 +339,23 @@ Work items:
       work in M4.
 - [ ] flip `STRICT_IDEMPOTENCY` to default `True` (before 0.1.0; now gated only
       on the wrappers, since the enum has landed)
-- [ ] template tag for the JS SDK v6 script + button container
+- [x] **Template tags for the JS SDK v6** (2026-07-28) — `{% paypal_sdk %}`
+      (script + config), `{% paypal_sdk_url %}`, `{% paypal_client_id %}`.
+      Verified against PayPal's v6 docs: the SDK is loaded from
+      **`/web-sdk/v6/core`** (v5's `/sdk/js` is a different generation) on
+      different hosts for sandbox and live, and initialised with
+      `createInstance({clientId, components})` — a plain client id is enough for
+      basic checkout; a server-issued client token is only needed for
+      Fastlane/vaulting (M6). Config travels through `|json_script`, so a value
+      containing `</script>` cannot break out — pinned by a test. Only public
+      values are emitted; a test asserts the secret never appears.
+      - Dropped a `paypal_sdk_config_json` tag I had written: a simple_tag
+        returning a JSON *string* is HTML-escaped by autoescaping, and marking it
+        safe inside `<script>` is exactly the hole `json_script` closes. Replaced
+        by an importable `sdk_config()` helper for views.
+      - The tags deliberately stop at loading the SDK. Wiring buttons to
+        create/capture endpoints is application code (URLs, CSRF, error
+        handling), and belongs in the demo rather than in a half-right tag.
 - [ ] `example/` demo: cart → button → capture → order marked paid
 
 ### M3 — webhooks

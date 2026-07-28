@@ -205,6 +205,59 @@ have to agree on what the buyer is charged.
 These helpers are synchronous. The async client is available for direct calls,
 but the wrappers are not async yet.
 
+The front end
+-------------
+
+The template tags load the **JS SDK v6** for the configured environment and
+publish its public configuration as JSON — sandbox and live are different hosts,
+which is easy to get wrong by hand:
+
+.. code-block:: html+django
+
+   {% load paypal_checkout %}
+   {% paypal_sdk %}
+
+That renders the SDK ``<script>`` plus a
+``<script type="application/json" id="paypal-sdk-config">`` block holding
+``clientId``, ``environment``, ``currency`` and ``components``. Reading it from
+JSON rather than templating values into code keeps the page safe even if a value
+contains ``</script>``:
+
+.. code-block:: javascript
+
+   const cfg = JSON.parse(
+       document.getElementById("paypal-sdk-config").textContent);
+
+   const sdk = await window.paypal.createInstance({
+       clientId: cfg.clientId,
+       components: cfg.components,          // ["paypal-payments"]
+   });
+
+   const session = sdk.createPayPalOneTimePaymentSession({
+       async onApprove(data) {
+           await fetch(`/checkout/${data.orderId}/capture/`, {method: "POST"});
+       },
+       onCancel() {}, onError(error) { console.error(error); },
+   });
+
+   button.addEventListener("click", async () => {
+       await session.start({presentationMode: "auto"}, createOrder());
+   });
+
+``createOrder()`` must resolve to ``{orderId: "..."}`` — your endpoint calls
+:func:`~paypal_checkout.orders.create_order` and returns ``order.paypal_id``. The
+browser never sees or sends the amount.
+
+Only the client id, environment and currency are ever emitted; the secret cannot
+reach a template. Pass ``{% paypal_sdk "paypal-payments,venmo-payments" %}`` for
+more components, and use
+:func:`paypal_checkout.templatetags.paypal_checkout.sdk_config` if you would
+rather serve the same values from a view.
+
+The tags stop there on purpose: wiring buttons to your own create and capture
+endpoints is application code, since URLs, CSRF and error handling differ per
+project.
+
 Authorize now, capture later
 ----------------------------
 
