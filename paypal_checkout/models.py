@@ -18,8 +18,9 @@ be traced back to a cart, an invoice, a subscription row, whatever it is.
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import models, transaction
+from django.utils.dateparse import parse_datetime
 
-__all__ = ["PayPalOrder", "Capture"]
+__all__ = ["PayPalOrder", "Authorization", "Capture"]
 
 
 def order_request_id(order_pk):
@@ -35,6 +36,27 @@ def capture_request_id(order_pk, capture_pk):
     PayPal replay the first, failed response forever.
     """
     return f"order:{order_pk}:capture:{capture_pk}"
+
+
+def authorization_request_id(order_pk, authorization_pk):
+    """Idempotency key for one authorization *attempt*.
+
+    Per-attempt for the same reason as captures: an authorization can be denied,
+    and a fixed key would make PayPal replay that denial for ever.
+    """
+    return f"order:{order_pk}:authorize:{authorization_pk}"
+
+
+class PendingAttemptMixin(models.Model):
+    """Shared behaviour for rows that exist before PayPal is called."""
+
+    class Meta:
+        abstract = True
+
+    @property
+    def is_unconfirmed(self):
+        """The outcome is unknown — it may or may not have reached PayPal."""
+        return self.status == self.Status.INITIATED
 
 
 class TargetMixin(models.Model):
@@ -157,12 +179,19 @@ class PayPalOrder(TargetMixin):
         return bool(self.paypal_id)
 
     def pending_capture(self):
-        """A capture attempt that was started but never confirmed, if any.
+        """A direct capture attempt started but never confirmed, if any.
 
         Its outcome is unknown: it may have reached PayPal. Recovery must reuse
-        *this* row's key rather than starting a new attempt.
+        *this* row's key rather than starting a new attempt. Captures made
+        against an authorization are that authorization's business.
         """
-        return self.captures.filter(status=Capture.Status.INITIATED).order_by("pk").first()
+        return (
+            self.captures.filter(
+                status=Capture.Status.INITIATED, authorization__isnull=True
+            )
+            .order_by("pk")
+            .first()
+        )
 
     def start_capture(self, *, amount=None, currency=None, final_capture=True):
         """Persist a capture attempt and return it, key included.
@@ -174,16 +203,35 @@ class PayPalOrder(TargetMixin):
         pending = self.pending_capture()
         if pending is not None:
             return pending
+        return _start_capture(
+            self, authorization=None, amount=amount, currency=currency,
+            final_capture=final_capture,
+        )
+
+    def pending_authorization(self):
+        """An authorization attempt started but never confirmed, if any."""
+        return (
+            self.authorizations.filter(status=Authorization.Status.INITIATED)
+            .order_by("pk")
+            .first()
+        )
+
+    def start_authorization(self, *, amount=None, currency=None):
+        """Persist an authorization attempt and return it, key included."""
+        pending = self.pending_authorization()
+        if pending is not None:
+            return pending
         with transaction.atomic():
-            capture = self.captures.create(
-                status=Capture.Status.INITIATED,
+            authorization = self.authorizations.create(
+                status=Authorization.Status.INITIATED,
                 amount=self.amount if amount is None else amount,
                 currency=(currency or self.currency).upper(),
-                final_capture=final_capture,
             )
-            capture.request_id = capture_request_id(self.pk, capture.pk)
-            capture.save(update_fields=["request_id", "updated_at"])
-        return capture
+            authorization.request_id = authorization_request_id(
+                self.pk, authorization.pk
+            )
+            authorization.save(update_fields=["request_id", "updated_at"])
+        return authorization
 
     def update_from_payload(self, payload, *, save=True):
         """Merge a PayPal order payload into this row."""
@@ -204,7 +252,100 @@ class PayPalOrder(TargetMixin):
         return self
 
 
-class Capture(models.Model):
+def _start_capture(order, *, authorization, amount, currency, final_capture):
+    """Create a capture row and give it its key, in one transaction."""
+    with transaction.atomic():
+        capture = order.captures.create(
+            authorization=authorization,
+            status=Capture.Status.INITIATED,
+            amount=order.amount if amount is None else amount,
+            currency=(currency or order.currency).upper(),
+            final_capture=final_capture,
+        )
+        capture.request_id = capture_request_id(order.pk, capture.pk)
+        capture.save(update_fields=["request_id", "updated_at"])
+    return capture
+
+
+class Authorization(PendingAttemptMixin):
+    """One authorization attempt against a :class:`PayPalOrder`.
+
+    Only relevant for ``intent=AUTHORIZE``: the money is held, then captured
+    later against the authorization rather than against the order.
+    """
+
+    class Status(models.TextChoices):
+        #: Local-only: the row exists, the outcome is not known yet.
+        INITIATED = "INITIATED", "Initiated locally"
+        CREATED = "CREATED", "Created"
+        CAPTURED = "CAPTURED", "Captured"
+        PARTIALLY_CAPTURED = "PARTIALLY_CAPTURED", "Partially captured"
+        DENIED = "DENIED", "Denied"
+        EXPIRED = "EXPIRED", "Expired"
+        PENDING = "PENDING", "Pending"
+        VOIDED = "VOIDED", "Voided"
+
+    order = models.ForeignKey(
+        "PayPalOrder", related_name="authorizations", on_delete=models.CASCADE
+    )
+    paypal_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    request_id = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    status = models.CharField(max_length=24, choices=Status, default=Status.INITIATED)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    expires_at = models.DateTimeField(
+        null=True, blank=True, help_text="PayPal's expiration_time for the hold."
+    )
+    raw = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [models.Index(fields=("status",))]
+
+    def __str__(self):
+        return self.paypal_id or f"{self.get_status_display()} #{self.pk}"
+
+    def pending_capture(self):
+        """A capture of *this* authorization that was never confirmed."""
+        return self.captures.filter(status=Capture.Status.INITIATED).order_by("pk").first()
+
+    def start_capture(self, *, amount=None, currency=None, final_capture=True):
+        """Persist a capture attempt against this authorization."""
+        pending = self.pending_capture()
+        if pending is not None:
+            return pending
+        return _start_capture(
+            self.order,
+            authorization=self,
+            amount=self.amount if amount is None else amount,
+            currency=currency or self.currency,
+            final_capture=final_capture,
+        )
+
+    def update_from_payload(self, payload, *, save=True):
+        """Merge a PayPal authorization payload into this row."""
+        paypal_id = payload.get("id")
+        if paypal_id:
+            self.paypal_id = paypal_id
+        status = payload.get("status")
+        if status in self.Status.values:
+            self.status = status
+        expiration = payload.get("expiration_time")
+        if expiration:
+            parsed = parse_datetime(expiration)
+            if parsed is not None:
+                self.expires_at = parsed
+        self.raw = payload
+        if save:
+            self.save(
+                update_fields=["paypal_id", "status", "expires_at", "raw", "updated_at"]
+            )
+        return self
+
+
+class Capture(PendingAttemptMixin):
     """One capture attempt against a :class:`PayPalOrder`."""
 
     class Status(models.TextChoices):
@@ -219,6 +360,15 @@ class Capture(models.Model):
 
     order = models.ForeignKey(
         PayPalOrder, related_name="captures", on_delete=models.CASCADE
+    )
+    #: Set when the money was captured against an authorization rather than
+    #: directly against the order.
+    authorization = models.ForeignKey(
+        Authorization,
+        related_name="captures",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
     )
     paypal_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
     request_id = models.CharField(max_length=128, unique=True, null=True, blank=True)

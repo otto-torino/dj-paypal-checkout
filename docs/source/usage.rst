@@ -205,6 +205,33 @@ have to agree on what the buyer is charged.
 These helpers are synchronous. The async client is available for direct calls,
 but the wrappers are not async yet.
 
+Authorize now, capture later
+----------------------------
+
+With ``intent=AUTHORIZE`` the money is held rather than taken, and captured
+afterwards against the authorization:
+
+.. code-block:: python
+
+   from paypal_checkout.models import PayPalOrder
+   from paypal_checkout.orders import (
+       create_order, authorize_order, capture_authorization,
+   )
+
+   order = create_order(client, amount=cart.total,
+                        intent=PayPalOrder.Intent.AUTHORIZE, target=cart)
+   # ...buyer approves...
+   authorization = authorize_order(client, order)   # money held
+   authorization.expires_at                         # PayPal's hold expiry
+
+   # ...when you ship...
+   capture = capture_authorization(client, authorization)
+
+``capture_authorization`` takes ``amount`` for a partial capture, exactly like
+``capture_order``, and fires the same signals. Captures made this way carry
+``capture.authorization``; direct order captures leave it ``None``, and the two
+pools are kept separate so a recovery never mistakes one for the other.
+
 What survives a crash
 ---------------------
 
@@ -217,6 +244,8 @@ interrupted call is discoverable rather than lost:
 
    PayPalOrder.objects.pending()        # started locally, never confirmed
    order.pending_capture()              # a capture attempt of unknown outcome
+   order.pending_authorization()        # ditto, for an authorization
+   capture.is_unconfirmed               # True while the outcome is unknown
 
 An unconfirmed capture attempt is **reused** by the next ``capture_order`` call,
 key and all — its outcome is unknown, so it may have reached PayPal, and reusing

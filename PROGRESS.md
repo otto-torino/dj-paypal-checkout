@@ -322,11 +322,21 @@ Work items:
       - When a capture response contains no capture object, the attempt is left
         `INITIATED` and a structured warning is logged: money may have moved, and
         recording a guess would be worse than recording "unknown".
-- [ ] **`authorize` deliberately not done yet.** It needs an `Authorization`
-      model plus a second capture path (`/v2/payments/authorizations/{id}/capture`),
-      i.e. a third model and another flow. Half-implementing it would be worse
-      than leaving it out, so the CAPTURE-intent flow landed first. Next item
-      here.
+- [x] **`authorize` + `Authorization` model** (2026-07-28, migration `0002`).
+      `authorize_order` (hold) and `capture_authorization` (take), same
+      persisted-key and recovery rules as captures; key scheme
+      `order:<pk>:authorize:<auth_pk>` — **per attempt**, deviating from the
+      literal `order:<pk>:authorize` for the reason Elisa gave about captures: an
+      authorization can be denied, and a fixed key would make PayPal replay that
+      denial for ever. `Capture.authorization` distinguishes the two capture
+      paths, and the two pending pools are kept separate so a recovery can never
+      mistake a direct order capture for an authorization capture. Note the
+      asymmetry in PayPal's API, handled here: capturing an *order* answers with
+      the order (capture nested), capturing an *authorization* answers with the
+      capture itself. `expires_at` holds PayPal's hold expiry, parsed leniently
+      (an unparseable date is ignored, never fatal).
+- [ ] `void_authorization` — not done; releasing a hold belongs with the refund
+      work in M4.
 - [ ] flip `STRICT_IDEMPOTENCY` to default `True` (before 0.1.0; now gated only
       on the wrappers, since the enum has landed)
 - [ ] template tag for the JS SDK v6 script + button container

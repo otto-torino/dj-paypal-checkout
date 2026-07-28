@@ -23,15 +23,25 @@ import logging
 
 from .client import Idempotency
 from .exceptions import PayPalAmountError, PayPalError
-from .models import Capture, PayPalOrder
+from .models import Authorization, Capture, PayPalOrder
 from .money import amount_payload, parse_amount_payload
 from .signals import payment_captured, payment_denied
 
-__all__ = ["ORDERS_PATH", "create_order", "refresh_order", "fetch_order", "capture_order"]
+__all__ = [
+    "ORDERS_PATH",
+    "AUTHORIZATIONS_PATH",
+    "create_order",
+    "refresh_order",
+    "fetch_order",
+    "capture_order",
+    "authorize_order",
+    "capture_authorization",
+]
 
 logger = logging.getLogger(__name__)
 
 ORDERS_PATH = "/v2/checkout/orders"
+AUTHORIZATIONS_PATH = "/v2/payments/authorizations"
 
 
 def _validate_purchase_units(purchase_units, amount, currency):
@@ -192,6 +202,85 @@ def capture_order(client, order, *, amount=None, final_capture=True):
 
     capture.update_from_payload(capture_payload)
     _notify(capture, order)
+    return capture
+
+
+def _extract_authorization(payload):
+    """Pull the authorization out of the order representation PayPal returns."""
+    for unit in payload.get("purchase_units") or []:
+        if not isinstance(unit, dict):
+            continue
+        authorizations = (unit.get("payments") or {}).get("authorizations") or []
+        if authorizations and isinstance(authorizations[0], dict):
+            return authorizations[0]
+    return None
+
+
+def authorize_order(client, order):
+    """Authorize an approved order — hold the money without taking it.
+
+    Only meaningful for ``intent=AUTHORIZE``. Returns the
+    :class:`~paypal_checkout.models.Authorization` row; capture it later with
+    :func:`capture_authorization`.
+    """
+    paypal_id = _require_paypal_id(order)
+    authorization = order.start_authorization()
+
+    payload = client.post(
+        f"{ORDERS_PATH}/{paypal_id}/authorize",
+        request_id=authorization.request_id,
+        idempotency=Idempotency.REQUIRED,
+    )
+    order.update_from_payload(payload)
+
+    authorization_payload = _extract_authorization(payload)
+    if authorization_payload is None:
+        # Same reasoning as an unreadable capture response: record the payload,
+        # leave the attempt unconfirmed, let reconciliation decide.
+        authorization.raw = payload
+        authorization.save(update_fields=["raw", "updated_at"])
+        logger.warning(
+            "authorize response contained no authorization object; attempt %s "
+            "left unconfirmed for reconciliation",
+            authorization.request_id,
+            extra={
+                "paypal_endpoint": f"{ORDERS_PATH}/{{id}}/authorize",
+                "paypal_issue": "authorization_not_in_response",
+            },
+        )
+        return authorization
+
+    return authorization.update_from_payload(authorization_payload)
+
+
+def capture_authorization(client, authorization, *, amount=None, final_capture=True):
+    """Capture money held by an authorization.
+
+    Unlike the order-capture endpoint, this one answers with the capture itself
+    rather than with the enclosing order.
+    """
+    if not authorization.paypal_id:
+        raise PayPalError(
+            f"{authorization!r} has no PayPal id: it was started locally but PayPal "
+            "never confirmed it. Reconcile it before continuing."
+        )
+    capture = authorization.start_capture(amount=amount, final_capture=final_capture)
+
+    body = None
+    if amount is not None:
+        body = {
+            "amount": amount_payload(amount, capture.currency),
+            "final_capture": final_capture,
+        }
+
+    payload = client.post(
+        f"{AUTHORIZATIONS_PATH}/{authorization.paypal_id}/capture",
+        json=body,
+        request_id=capture.request_id,
+        idempotency=Idempotency.REQUIRED,
+    )
+    capture.update_from_payload(payload)
+    _notify(capture, authorization.order)
     return capture
 
 
