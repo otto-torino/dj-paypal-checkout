@@ -4,17 +4,20 @@ on:
   push:
     branches: [ main ]
 
+# Two jobs on purpose. `check` decides whether this push is a release and needs
+# no environment, so an ordinary push to main finishes cleanly. Only `publish`
+# carries `environment: pypi`, so only a real release waits for a human — with
+# both in one job the approval gate sat in front of the version check and every
+# push queued a pending approval, which is noise that invites approving the
+# wrong run.
 jobs:
-  publish:
+  check:
     runs-on: ubuntu-latest
-    # Give the environment required reviewers in the repository settings and a
-    # release needs a human click, even if a version bump reaches main by
-    # accident. The name must match the "Environment name" of the PyPI trusted
-    # publisher, or the OIDC claim will not match and publishing will fail.
-    environment: pypi
     permissions:
-      id-token: write   # OIDC token for PyPI Trusted Publishing
-      contents: write   # create and push the version tag
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.decide.outputs.publish }}
 
     steps:
     - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -33,35 +36,56 @@ jobs:
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
     - name: Decide whether to publish
-      id: tagcheck
+      id: decide
       run: |
         VERSION="${{ steps.version.outputs.version }}"
         if [ "$VERSION" = "0.0.0" ]; then
-          echo "skip=true" >> "$GITHUB_OUTPUT"
-          echo "Version is the 0.0.0 placeholder — nothing released yet, skipping publish."
+          echo "publish=false" >> "$GITHUB_OUTPUT"
+          echo "Version is the 0.0.0 placeholder — nothing to release."
         elif git rev-parse "v$VERSION" >/dev/null 2>&1; then
-          echo "skip=true" >> "$GITHUB_OUTPUT"
-          echo "Version v$VERSION already tagged — skipping publish."
+          echo "publish=false" >> "$GITHUB_OUTPUT"
+          echo "Version v$VERSION is already tagged — nothing to release."
         else
-          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "v$VERSION is not tagged yet — this push is a release."
         fi
 
+  publish:
+    needs: check
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    # Required reviewers on this environment are what make a release wait for a
+    # human, even if a version bump reaches main by accident. The name must match
+    # the "Environment name" of the PyPI trusted publisher, or the OIDC claim
+    # will not match and publishing will fail.
+    environment: pypi
+    permissions:
+      id-token: write   # OIDC token for PyPI Trusted Publishing
+      contents: write   # create and push the version tag
+
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      with:
+        python-version: "3.13"
+
     - name: Build package
-      if: steps.tagcheck.outputs.skip == 'false'
       run: |
         python -m pip install --upgrade pip build
         python -m build
 
     - name: Publish to PyPI
-      if: steps.tagcheck.outputs.skip == 'false'
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         skip-existing: true
 
     - name: Tag the released version
-      if: steps.tagcheck.outputs.skip == 'false'
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git tag -a "v${{ steps.version.outputs.version }}" -m "New version: v${{ steps.version.outputs.version }}"
-        git push origin "v${{ steps.version.outputs.version }}"
+        git tag -a "v${{ needs.check.outputs.version }}" -m "New version: v${{ needs.check.outputs.version }}"
+        git push origin "v${{ needs.check.outputs.version }}"

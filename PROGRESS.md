@@ -1,12 +1,12 @@
 # Progress — modern PayPal integration library for Django
 
-Status: **0.1.0 cut** — M0–M4 done, awaiting approval of the `pypi` environment
-for the upload to happen. Started and brought here on 2026-07-28.
+Status: **0.1.0 released** — M0–M4 done and on PyPI. Started and brought here on
+2026-07-28.
 
 - Repo: https://github.com/otto-torino/dj-paypal-checkout (public)
 - Docs: https://dj-paypal-checkout.readthedocs.io (live, badge *passing*)
-- PyPI: `dj-paypal-checkout` — **not published yet**; the name is only reserved
-  by the first successful upload
+- PyPI: https://pypi.org/project/dj-paypal-checkout/ — 0.1.0, wheel + sdist,
+  tag `v0.1.0` pushed. The name is now ours.
 - 418 tests, **100% coverage incl. branches** (enforced by `fail_under = 100`),
   green on py3.11–3.14 across Django 5.2 and 6.0
 - Working directory is still `django-paypal/`, which no longer matches the
@@ -564,22 +564,25 @@ Still open, but none of them block M0/M1:
       status rewritten — including the honest caveat that it has not yet run
       against live PayPal traffic. Local build + `twine check` PASSED on both
       artifacts.
-- [ ] **Awaiting Elisa's approval of the `pypi` environment** for the upload to
-      actually happen. The push only *queues* the release; that click is what
-      sends it, converts the pending publisher into a normal one, creates the
-      project and reserves the name on PyPI.
-- [ ] **Fix a side effect of the environment gate, after the release.** The
-      environment gates the *whole job*, which sits in front of the version check,
-      so **every** push to `main` now queues an approval request — even the ones
-      that would immediately skip. Four such stale runs piled up and were
-      cancelled by hand; leaving them is worse than noise, because five identical
-      pending approvals invite clicking the wrong one.
-      Fix: split `publish.yml` into a `check` job with **no** environment that
-      outputs whether to publish, and a `publish` job with
-      `needs: check` + `if:` + `environment: pypi`. Then a non-release push
-      completes cleanly and only a real release waits for a human. Deliberately
-      deferred until after this release, so there is exactly one pending approval
-      to act on rather than two runs for the same version.
+- [x] **Published** (2026-07-28). Elisa approved the `pypi` environment, the run
+      succeeded, the pending publisher converted into a normal one and the project
+      was created. Verified from the PyPI JSON API: version `0.1.0`,
+      `requires_python >=3.11`, license MIT, `Development Status :: 3 - Alpha`,
+      Django 5.2/6.0 classifiers, both artifacts present (wheel 51.9 kB, sdist
+      74.0 kB), dependencies `Django>=5.2`, `httpx>=0.27` and
+      `cryptography>=42.0; extra == "crypto"`, and the Documentation URL pointing
+      at the live RTD site. Tag `v0.1.0` on the remote.
+- [x] **Environment-gate side effect fixed** (2026-07-28). The gate applied to the
+      *whole job*, which sat in front of the version check, so **every** push to
+      `main` queued an approval request — even ones that would immediately skip.
+      Four stale runs piled up and were cancelled by hand; the danger is not the
+      noise but that five identical pending approvals invite clicking the wrong
+      one. `publish.yml` is now two jobs: `check` (no environment) reads the
+      version and outputs whether this push is a release; `publish`
+      (`needs: check`, `if:`, `environment: pypi`) does the work. An ordinary push
+      now finishes clean and only a real release waits for a human.
+      The refactor was held back until after the release on purpose, so there was
+      exactly one pending approval to act on rather than two runs for one version.
 
 #### Release prerequisites (2026-07-28)
 
