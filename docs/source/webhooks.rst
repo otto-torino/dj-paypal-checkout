@@ -133,8 +133,12 @@ Handled events
 
 Out of the box: ``PAYMENT.CAPTURE.COMPLETED``, ``.DENIED``, ``.PENDING``,
 ``.REFUNDED``/``.REVERSED``, ``CHECKOUT.ORDER.APPROVED``/``.COMPLETED``, and
-``PAYMENT.AUTHORIZATION.CREATED``/``.VOIDED``. They update the local row and
-send the same :doc:`signals <usage>` the capture call sends.
+``PAYMENT.AUTHORIZATION.CREATED``/``.VOIDED``. The development version also
+handles subscription create/update/lifecycle events,
+``BILLING.SUBSCRIPTION.PAYMENT.FAILED`` and ``PAYMENT.SALE.COMPLETED``; see
+:doc:`subscriptions`.
+
+They update the local row and send the same signals the direct helper sends.
 
 An event nobody handles is stored and acknowledged — not an error.
 

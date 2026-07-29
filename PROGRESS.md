@@ -1,22 +1,29 @@
 # Progress — modern PayPal integration library for Django
 
-Status: **0.1.0 released** — M0–M4 done and on PyPI. Started and brought here on
-2026-07-28.
+Status: **0.2.0 release candidate** — M0–M5 implemented, documented and
+release-verified. The version bump is ready to push; the protected GitHub/PyPI
+workflow still has to publish and tag it. Started on 2026-07-28; M5 work
+continued on 2026-07-29.
 
 - Repo: https://github.com/otto-torino/dj-paypal-checkout (public)
 - Docs: https://dj-paypal-checkout.readthedocs.io (live, badge *passing*)
 - PyPI: https://pypi.org/project/dj-paypal-checkout/ — 0.1.0, wheel + sdist,
-  tag `v0.1.0` pushed. The name is now ours.
+  tag `v0.1.0` pushed. Version 0.2.0 is the current release candidate.
 - 418 tests, **100% coverage incl. branches** (enforced by `fail_under = 100`),
   green on py3.11–3.14 across Django 5.2 and 6.0
+- Current M5 working tree: 502 tests, **100% coverage incl. branches**; its 84
+  subscription-specific tests and the full suite pass locally. Both ends of the
+  supported Python/Django matrix, docs and distribution artifacts are green.
 - Working directory is still `django-paypal/`, which no longer matches the
   package name. Cosmetic only.
 
-Shipped: config, OAuth2 auth with token caching, sync/async clients, amounts,
-models with persisted idempotency keys, Orders v2 create/authorize/capture,
-refunds and voids, verified webhooks with an atomic claim, a reconciliation
-command, signals, read-only admin, JS SDK v6 tags, runnable demo.
-Not shipped: subscriptions (M5), Vault and Card Fields (M6).
+Shipped in 0.1.0: config, OAuth2 auth with token caching, sync/async clients,
+amounts, models with persisted idempotency keys, Orders v2
+create/authorize/capture, refunds and voids, verified webhooks with an atomic
+claim, a reconciliation command, signals, read-only admin, JS SDK v6 tags,
+runnable demo.
+Ready to ship in 0.2.0: subscriptions (M5).
+Not implemented: Vault and Card Fields (M6).
 
 Goal: a maintained, REST-first PayPal library for Django — Orders v2 checkout,
 subscriptions, refunds and **webhooks** — replacing the IPN/PDT-era tooling.
@@ -352,10 +359,9 @@ Work items:
       the order (capture nested), capturing an *authorization* answers with the
       capture itself. `expires_at` holds PayPal's hold expiry, parsed leniently
       (an unparseable date is ignored, never fatal).
-- [ ] `void_authorization` — not done; releasing a hold belongs with the refund
-      work in M4.
-- [ ] flip `STRICT_IDEMPOTENCY` to default `True` (before 0.1.0; now gated only
-      on the wrappers, since the enum has landed)
+- [x] `void_authorization` — moved to and completed with the refund work in M4.
+- [x] flip `STRICT_IDEMPOTENCY` to default `True` — completed in M4 before
+      0.1.0.
 - [x] **Template tags for the JS SDK v6** (2026-07-28) — `{% paypal_sdk %}`
       (script + config), `{% paypal_sdk_url %}`, `{% paypal_client_id %}`.
       Verified against PayPal's v6 docs: the SDK is loaded from
@@ -509,8 +515,46 @@ Work items:
 **← v0.1 released here** (decision 2: M0–M4 is the first release)
 
 ### M5 — subscriptions
-- [ ] products + plans catalog, subscription create/activate/cancel/suspend
-- [ ] `Subscription` model, lifecycle signals, docs
+- [x] **Products catalog** — `Product` model plus create/fetch/refresh helpers;
+      create is persisted before the API call and uses a stable per-row
+      idempotency key.
+- [x] **Billing plans** — `Plan` model; create/fetch/refresh and
+      activate/deactivate helpers. Rich `billing_cycles` and payment preferences
+      are passed through rather than hidden behind an incomplete local schema.
+- [x] **Subscriptions lifecycle** — `Subscription` model with optional generic
+      relation to the host project's object; create/fetch/refresh,
+      activate/suspend/cancel and revise plan or quantity.
+- [x] **Idempotency policy** — creates use persisted `REQUIRED` keys. Repeatable,
+      non-money-moving lifecycle transitions use `OPTIONAL`, carry no fixed key
+      and are not retried automatically; a fixed per-subscription key would
+      replay an earlier transition after a legitimate state change.
+- [x] **Recurring payments** — `SubscriptionPayment` records
+      `PAYMENT.SALE.COMPLETED`, deduped by PayPal sale id, and exposes the
+      completed total through `Subscription.paid_amount`.
+- [x] **Subscription webhooks and signals** — created/updated,
+      activated/re-activated, suspended, cancelled, expired, payment completed
+      and payment failed update local state and emit lifecycle signals.
+- [x] **Read-only admin** for products, plans, subscriptions and recurring
+      payments; migration `0005`.
+- [x] **Local verification** — 84 subscription and subscription-webhook tests
+      pass; the complete 502-test suite passes with 100% branch coverage;
+      `makemigrations --check --dry-run` reports no model drift; Sphinx 9.1
+      builds with warnings as errors.
+- [x] **Documentation** — added a subscriptions guide with product → active plan →
+      create/approve subscription, lifecycle transitions, webhook requirements,
+      signal payloads and idempotency behaviour; add the public API to
+      `api_reference.rst`.
+- [x] **Demo decision** — the runnable demo remains focused on one-off checkout.
+      Subscription cadence, trials, return URLs and the host membership model
+      are application policy; `demo.rst` says so and points to the complete
+      subscription guide.
+- [x] **Release verification** — 502 tests and 100% branch coverage; green on
+      Python 3.12 / Django 5.2.16 and Python 3.14 / Django 6.0.7; Sphinx 9.1
+      with warnings as errors; wheel + sdist build and `twine check` pass.
+      The wheel contains `subscriptions.py` and migration `0005`, while repo-only
+      `scripts/`, tests, docs and example code are excluded.
+- [ ] **Release M5 as 0.2.0** — version and status references are updated.
+      Commit/push, protected PyPI approval, publication and tag remain.
 
 ### M6 — later / maybe
 - [ ] Vault v3 (saved payment methods) — US-only, check we need it
@@ -520,7 +564,7 @@ Work items:
 
 ## Open questions
 
-Still open, but none of them block M0/M1:
+Still open; none blocks documenting and verifying M5:
 
 - Is this library driven by a concrete project (which one, and which flows does it
   actually need)? Doesn't change the milestone order any more, but it decides how
@@ -633,7 +677,7 @@ Still open, but none of them block M0/M1:
 - [x] README badges in the house style (CI, codecov, Read the Docs, Django,
       Python, PayPal), matching `django-copier`/`django-cookiecutter`. They stay
       grey until the repo, Codecov project and RTD import exist.
-- [ ] **Read the Docs import — the last prerequisite, and it is manual.**
+- [x] **Read the Docs import — completed 2026-07-28.**
       Decision (Elisa, 2026-07-28): **import RTD first, release after**, so the
       PyPI page is born with a working documentation link and the README badge is
       valid from the start.
@@ -692,6 +736,10 @@ Still open, but none of them block M0/M1:
       resolved (`PayPalOrder` and `refund_capture` present in
       `api_reference.html`), which means the Django setup in `docs/source/conf.py`
       works in a clean environment.
-- [ ] M5 — subscriptions (products/plans catalog, subscription lifecycle).
+- [ ] **M5 implementation, documentation and release verification are complete;
+      0.2.0 publication and tag remain.** See the M5 checklist above.
+- [x] **Release-doc guard added** (2026-07-29):
+      `scripts/check_release_docs.py` checks that version/status references agree
+      before docs CI and before a real publish.
 
 *Reminder: semantic commits, subject only, no body, no Co-Authored-By trailer.*

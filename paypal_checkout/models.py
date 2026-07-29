@@ -23,7 +23,17 @@ from django.db import models, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-__all__ = ["PayPalOrder", "Authorization", "Capture", "Refund", "WebhookEvent"]
+__all__ = [
+    "PayPalOrder",
+    "Authorization",
+    "Capture",
+    "Refund",
+    "Product",
+    "Plan",
+    "Subscription",
+    "SubscriptionPayment",
+    "WebhookEvent",
+]
 
 
 def order_request_id(order_pk):
@@ -74,6 +84,40 @@ def void_request_id(order_pk, authorization_pk):
     return f"order:{order_pk}:void:{authorization_pk}"
 
 
+def product_request_id(product_pk):
+    """Idempotency key for creating a catalog product."""
+    return f"product:{product_pk}:create"
+
+
+def plan_request_id(plan_pk):
+    """Idempotency key for creating a billing plan."""
+    return f"plan:{plan_pk}:create"
+
+
+def subscription_request_id(subscription_pk):
+    """Idempotency key for creating a subscription.
+
+    Per row, like every other create. Note that the lifecycle transitions
+    (activate / suspend / cancel / revise) deliberately carry **no** key at all —
+    see :mod:`paypal_checkout.subscriptions` for why.
+    """
+    return f"subscription:{subscription_pk}:create"
+
+
+def _start_with_key(manager, key_builder, **fields):
+    """Create a row, then give it the idempotency key derived from its pk.
+
+    Two statements in one transaction, the same pattern as
+    :meth:`PayPalOrderManager.start`: the key needs the pk, which only exists
+    after the insert.
+    """
+    with transaction.atomic():
+        instance = manager.create(**fields)
+        instance.request_id = key_builder(instance.pk)
+        instance.save(update_fields=["request_id", "updated_at"])
+    return instance
+
+
 class PendingAttemptMixin(models.Model):
     """Shared behaviour for rows that exist before PayPal is called."""
 
@@ -98,6 +142,15 @@ class TargetMixin(models.Model):
 
     class Meta:
         abstract = True
+
+    @staticmethod
+    def target_fields(target):
+        if target is None:
+            return {}
+        return {
+            "content_type": ContentType.objects.get_for_model(target),
+            "object_id": str(target.pk),
+        }
 
 
 class PayPalOrderQuerySet(models.QuerySet):
@@ -191,15 +244,6 @@ class PayPalOrder(TargetMixin):
 
     def __str__(self):
         return self.paypal_id or f"{self.get_status_display()} #{self.pk}"
-
-    @staticmethod
-    def target_fields(target):
-        if target is None:
-            return {}
-        return {
-            "content_type": ContentType.objects.get_for_model(target),
-            "object_id": str(target.pk),
-        }
 
     @property
     def is_confirmed_by_paypal(self):
@@ -615,4 +659,337 @@ class Refund(PendingAttemptMixin):
         self.raw = payload
         if save:
             self.save(update_fields=["paypal_id", "status", "raw", "updated_at"])
+        return self
+
+
+class ProductManager(models.Manager):
+    def start(self, *, name, live, product_type=None, description=""):
+        """Persist a product row and its key before calling PayPal."""
+        return _start_with_key(
+            self,
+            product_request_id,
+            name=name,
+            product_type=product_type or Product.Type.SERVICE,
+            description=description or "",
+            live=live,
+        )
+
+
+class Product(models.Model):
+    """A catalog product — what a billing plan bills for."""
+
+    class Type(models.TextChoices):
+        PHYSICAL = "PHYSICAL", "Physical goods"
+        DIGITAL = "DIGITAL", "Digital goods"
+        SERVICE = "SERVICE", "Service"
+
+    paypal_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    request_id = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    name = models.CharField(max_length=127)
+    product_type = models.CharField(max_length=16, choices=Type, default=Type.SERVICE)
+    description = models.TextField(blank=True)
+    live = models.BooleanField(default=False)
+    raw = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = ProductManager()
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return self.paypal_id or f"{self.name} #{self.pk}"
+
+    def update_from_payload(self, payload, *, save=True):
+        paypal_id = payload.get("id")
+        if paypal_id:
+            self.paypal_id = paypal_id
+        name = payload.get("name")
+        if name:
+            self.name = name
+        product_type = payload.get("type")
+        if product_type in self.Type.values:
+            self.product_type = product_type
+        self.raw = payload
+        if save:
+            self.save(
+                update_fields=["paypal_id", "name", "product_type", "raw", "updated_at"]
+            )
+        return self
+
+
+class PlanManager(models.Manager):
+    def start(self, *, name, live, product=None, product_paypal_id=""):
+        """Persist a plan row and its key before calling PayPal."""
+        return _start_with_key(
+            self,
+            plan_request_id,
+            name=name,
+            product=product,
+            product_paypal_id=product_paypal_id or (product.paypal_id if product else ""),
+            live=live,
+        )
+
+
+class Plan(PendingAttemptMixin):
+    """A billing plan: the price and cadence subscriptions are created against."""
+
+    class Status(models.TextChoices):
+        #: Local-only: the row exists, PayPal has not been called yet.
+        INITIATED = "INITIATED", "Initiated locally"
+        CREATED = "CREATED", "Created"
+        ACTIVE = "ACTIVE", "Active"
+        INACTIVE = "INACTIVE", "Inactive"
+
+    paypal_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    request_id = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    product = models.ForeignKey(
+        Product,
+        related_name="plans",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        help_text="Null when the plan bills a product that is not in the local catalog.",
+    )
+    product_paypal_id = models.CharField(max_length=64, blank=True)
+    name = models.CharField(max_length=127)
+    status = models.CharField(max_length=24, choices=Status, default=Status.INITIATED)
+    live = models.BooleanField(default=False)
+    raw = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = PlanManager()
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [models.Index(fields=("status", "live"))]
+
+    def __str__(self):
+        return self.paypal_id or f"{self.name} #{self.pk}"
+
+    @property
+    def accepts_subscriptions(self):
+        """Only an ACTIVE plan can have subscriptions created against it."""
+        return self.status == self.Status.ACTIVE
+
+    def update_from_payload(self, payload, *, save=True):
+        paypal_id = payload.get("id")
+        if paypal_id:
+            self.paypal_id = paypal_id
+        name = payload.get("name")
+        if name:
+            self.name = name
+        status = payload.get("status")
+        if status in self.Status.values:
+            self.status = status
+        product_id = payload.get("product_id")
+        if product_id:
+            self.product_paypal_id = product_id
+        self.raw = payload
+        if save:
+            self.save(
+                update_fields=[
+                    "paypal_id",
+                    "name",
+                    "status",
+                    "product_paypal_id",
+                    "raw",
+                    "updated_at",
+                ]
+            )
+        return self
+
+
+class SubscriptionQuerySet(models.QuerySet):
+    def pending(self):
+        """Started locally but never confirmed by PayPal."""
+        return self.filter(status=Subscription.Status.INITIATED)
+
+    def active(self):
+        return self.filter(status=Subscription.Status.ACTIVE)
+
+    def for_target(self, target):
+        return self.filter(
+            content_type=ContentType.objects.get_for_model(target),
+            object_id=str(target.pk),
+        )
+
+
+class SubscriptionManager(models.Manager.from_queryset(SubscriptionQuerySet)):
+    def start(self, *, live, plan=None, plan_paypal_id="", quantity=1, target=None,
+              custom_id=""):
+        """Persist a subscription row and its key before calling PayPal."""
+        return _start_with_key(
+            self,
+            subscription_request_id,
+            plan=plan,
+            plan_paypal_id=plan_paypal_id or (plan.paypal_id if plan else ""),
+            quantity=quantity,
+            custom_id=custom_id or "",
+            live=live,
+            **Subscription.target_fields(target),
+        )
+
+
+class Subscription(TargetMixin, PendingAttemptMixin):
+    """A subscription: the recurring counterpart of :class:`PayPalOrder`."""
+
+    class Status(models.TextChoices):
+        #: Local-only: the row exists, PayPal has not been called yet.
+        INITIATED = "INITIATED", "Initiated locally"
+        APPROVAL_PENDING = "APPROVAL_PENDING", "Approval pending"
+        APPROVED = "APPROVED", "Approved"
+        ACTIVE = "ACTIVE", "Active"
+        SUSPENDED = "SUSPENDED", "Suspended"
+        CANCELLED = "CANCELLED", "Cancelled"
+        EXPIRED = "EXPIRED", "Expired"
+
+    paypal_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    request_id = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    plan = models.ForeignKey(
+        Plan,
+        related_name="subscriptions",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        help_text="Null when subscribing to a plan that is not in the local catalog.",
+    )
+    plan_paypal_id = models.CharField(max_length=64, blank=True)
+    status = models.CharField(max_length=24, choices=Status, default=Status.INITIATED)
+    quantity = models.PositiveIntegerField(default=1)
+    subscriber_email = models.EmailField(blank=True)
+    custom_id = models.CharField(max_length=127, blank=True)
+    starts_at = models.DateTimeField(null=True, blank=True)
+    next_billing_at = models.DateTimeField(null=True, blank=True)
+    live = models.BooleanField(default=False)
+    raw = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = SubscriptionManager()
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=("content_type", "object_id")),
+            models.Index(fields=("status", "live")),
+        ]
+
+    def __str__(self):
+        return self.paypal_id or f"{self.get_status_display()} #{self.pk}"
+
+    @property
+    def is_active(self):
+        return self.status == self.Status.ACTIVE
+
+    @property
+    def is_billable(self):
+        """Whether PayPal will keep charging it."""
+        return self.status in (self.Status.ACTIVE, self.Status.APPROVED)
+
+    @property
+    def paid_amount(self):
+        """Total of the completed payments recorded locally."""
+        total = self.payments.filter(
+            status=SubscriptionPayment.Status.COMPLETED
+        ).aggregate(total=models.Sum("amount"))["total"]
+        return total if total is not None else Decimal("0.00")
+
+    def approve_url(self):
+        """The link the buyer must follow to approve the subscription."""
+        for link in self.raw.get("links") or []:
+            if isinstance(link, dict) and link.get("rel") == "approve":
+                return link.get("href")
+        return None
+
+    def update_from_payload(self, payload, *, save=True):
+        fields = ["paypal_id", "status", "raw", "updated_at"]
+        paypal_id = payload.get("id")
+        if paypal_id:
+            self.paypal_id = paypal_id
+        status = payload.get("status")
+        if status in self.Status.values:
+            self.status = status
+        plan_id = payload.get("plan_id")
+        if plan_id:
+            self.plan_paypal_id = plan_id
+            fields.append("plan_paypal_id")
+        quantity = payload.get("quantity")
+        if quantity:
+            try:
+                self.quantity = int(quantity)
+                fields.append("quantity")
+            except (TypeError, ValueError):
+                pass
+        subscriber = payload.get("subscriber")
+        if isinstance(subscriber, dict) and subscriber.get("email_address"):
+            self.subscriber_email = subscriber["email_address"]
+            fields.append("subscriber_email")
+        custom_id = payload.get("custom_id")
+        if custom_id:
+            self.custom_id = custom_id
+            fields.append("custom_id")
+        starts_at = parse_datetime(payload.get("start_time") or "")
+        if starts_at is not None:
+            self.starts_at = starts_at
+            fields.append("starts_at")
+        billing_info = payload.get("billing_info")
+        if isinstance(billing_info, dict):
+            next_billing = parse_datetime(billing_info.get("next_billing_time") or "")
+            if next_billing is not None:
+                self.next_billing_at = next_billing
+                fields.append("next_billing_at")
+        self.raw = payload
+        if save:
+            self.save(update_fields=list(dict.fromkeys(fields)))
+        return self
+
+
+class SubscriptionPayment(models.Model):
+    """One recurring payment of a subscription.
+
+    Recorded from ``PAYMENT.SALE.COMPLETED``, whose resource carries a
+    ``billing_agreement_id`` — that is the subscription. Unique ``paypal_id``
+    means a redelivered webhook cannot count the same money twice.
+    """
+
+    class Status(models.TextChoices):
+        COMPLETED = "COMPLETED", "Completed"
+        PENDING = "PENDING", "Pending"
+        REFUNDED = "REFUNDED", "Refunded"
+        PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED", "Partially refunded"
+        DENIED = "DENIED", "Denied"
+        FAILED = "FAILED", "Failed"
+
+    subscription = models.ForeignKey(
+        Subscription, related_name="payments", on_delete=models.CASCADE
+    )
+    paypal_id = models.CharField(max_length=64, unique=True)
+    status = models.CharField(max_length=24, choices=Status, default=Status.COMPLETED)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    raw = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [models.Index(fields=("status",))]
+
+    def __str__(self):
+        return self.paypal_id
+
+    @property
+    def is_successful(self):
+        return self.status == self.Status.COMPLETED
+
+    def update_from_payload(self, payload, *, save=True):
+        status = payload.get("state") or payload.get("status")
+        if status and status.upper() in self.Status.values:
+            self.status = status.upper()
+        self.raw = payload
+        if save:
+            self.save(update_fields=["status", "raw", "updated_at"])
         return self

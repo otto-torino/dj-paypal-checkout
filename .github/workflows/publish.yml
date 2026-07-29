@@ -50,6 +50,10 @@ jobs:
           echo "v$VERSION is not tagged yet — this push is a release."
         fi
 
+    - name: Verify release version and documentation
+      if: steps.decide.outputs.publish == 'true'
+      run: python scripts/check_release_docs.py
+
   publish:
     needs: check
     if: needs.check.outputs.publish == 'true'

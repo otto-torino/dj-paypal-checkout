@@ -7,7 +7,17 @@ idempotency key?"), not to let anyone hand-edit payment state.
 
 from django.contrib import admin
 
-from .models import Authorization, Capture, PayPalOrder, Refund, WebhookEvent
+from .models import (
+    Authorization,
+    Capture,
+    PayPalOrder,
+    Plan,
+    Product,
+    Refund,
+    Subscription,
+    SubscriptionPayment,
+    WebhookEvent,
+)
 
 
 class ReadOnlyInline(admin.TabularInline):
@@ -238,3 +248,130 @@ class RefundAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+class SubscriptionPaymentInline(ReadOnlyInline):
+    model = SubscriptionPayment
+    fields = ("paypal_id", "status", "amount", "currency", "created_at")
+    readonly_fields = fields
+
+
+class ReadOnlyModelAdmin(admin.ModelAdmin):
+    """Shared read-only behaviour for the catalog and subscription admins."""
+
+    def get_fields(self, request, obj=None):
+        return self.readonly_fields
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description="Environment", ordering="live")
+    def environment(self, obj):
+        return "live" if obj.live else "sandbox"
+
+
+@admin.register(Product)
+class ProductAdmin(ReadOnlyModelAdmin):
+    list_display = ("__str__", "name", "product_type", "environment", "created_at")
+    list_filter = ("product_type", "live")
+    search_fields = ("paypal_id", "request_id", "name")
+    date_hierarchy = "created_at"
+    readonly_fields = (
+        "paypal_id",
+        "request_id",
+        "name",
+        "product_type",
+        "description",
+        "live",
+        "raw",
+        "created_at",
+        "updated_at",
+    )
+
+
+@admin.register(Plan)
+class PlanAdmin(ReadOnlyModelAdmin):
+    list_display = ("__str__", "name", "status", "product", "environment", "created_at")
+    list_filter = ("status", "live")
+    search_fields = ("paypal_id", "request_id", "name", "product_paypal_id")
+    date_hierarchy = "created_at"
+    readonly_fields = (
+        "paypal_id",
+        "request_id",
+        "product",
+        "product_paypal_id",
+        "name",
+        "status",
+        "live",
+        "raw",
+        "created_at",
+        "updated_at",
+    )
+
+
+@admin.register(Subscription)
+class SubscriptionAdmin(ReadOnlyModelAdmin):
+    list_display = (
+        "__str__",
+        "status",
+        "plan_paypal_id",
+        "subscriber_email",
+        "next_billing_at",
+        "paid_amount",
+        "environment",
+        "target",
+    )
+    list_filter = ("status", "live")
+    search_fields = (
+        "paypal_id",
+        "request_id",
+        "plan_paypal_id",
+        "subscriber_email",
+        "custom_id",
+        "object_id",
+    )
+    date_hierarchy = "created_at"
+    inlines = (SubscriptionPaymentInline,)
+    readonly_fields = (
+        "paypal_id",
+        "request_id",
+        "plan",
+        "plan_paypal_id",
+        "status",
+        "quantity",
+        "subscriber_email",
+        "custom_id",
+        "starts_at",
+        "next_billing_at",
+        "live",
+        "content_type",
+        "object_id",
+        "target",
+        "raw",
+        "created_at",
+        "updated_at",
+    )
+
+
+@admin.register(SubscriptionPayment)
+class SubscriptionPaymentAdmin(ReadOnlyModelAdmin):
+    list_display = ("paypal_id", "subscription", "status", "amount", "currency", "created_at")
+    list_filter = ("status", "currency")
+    search_fields = ("paypal_id", "subscription__paypal_id")
+    date_hierarchy = "created_at"
+    readonly_fields = (
+        "subscription",
+        "paypal_id",
+        "status",
+        "amount",
+        "currency",
+        "raw",
+        "created_at",
+        "updated_at",
+    )

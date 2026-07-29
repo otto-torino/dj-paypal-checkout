@@ -17,7 +17,17 @@ which case it is absent, so always accept ``**kwargs``.
 
 from django.dispatch import Signal
 
-__all__ = ["payment_captured", "payment_denied", "payment_refunded"]
+__all__ = [
+    "payment_captured",
+    "payment_denied",
+    "payment_refunded",
+    "subscription_activated",
+    "subscription_suspended",
+    "subscription_cancelled",
+    "subscription_expired",
+    "subscription_payment_completed",
+    "subscription_payment_failed",
+]
 
 #: Money captured successfully. ``capture.status == COMPLETED``.
 payment_captured = Signal()
@@ -28,3 +38,35 @@ payment_denied = Signal()
 #: A capture was refunded, fully or partially. Carries ``refund`` when this
 #: project initiated it; a webhook about someone else's refund does not.
 payment_refunded = Signal()
+
+
+# -- subscriptions ----------------------------------------------------------
+#
+# These send ``sender=Subscription`` with ``subscription`` and ``target``.
+# The lifecycle ones also pass ``reason`` when one is known.
+#
+# Note they fire from **two** places: the wrapper that performed the transition
+# and the matching webhook. A subscription cancelled through the library will
+# therefore signal twice, which is the same idempotency requirement as for
+# payments — guard your handlers.
+
+#: Billing started or resumed.
+subscription_activated = Signal()
+
+#: Billing paused; the subscription still exists.
+subscription_suspended = Signal()
+
+#: Ended for good.
+subscription_cancelled = Signal()
+
+#: Ran to the end of its billing cycles.
+subscription_expired = Signal()
+
+#: A recurring payment succeeded. Carries ``payment`` (a
+#: :class:`~paypal_checkout.models.SubscriptionPayment`).
+subscription_payment_completed = Signal()
+
+#: A recurring payment failed. PayPal retries according to the plan's
+#: ``payment_preferences``, and suspends the subscription once the allowed
+#: failures run out.
+subscription_payment_failed = Signal()

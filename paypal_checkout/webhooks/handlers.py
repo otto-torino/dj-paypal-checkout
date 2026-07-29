@@ -13,9 +13,26 @@ of "this is ours, but the row is not here yet".
 import logging
 
 from ..exceptions import PayPalAmountError, PayPalWebhookNotReady
-from ..models import Authorization, Capture, PayPalOrder, Refund
-from ..money import parse_amount_payload
-from ..signals import payment_captured, payment_denied, payment_refunded
+from ..models import (
+    Authorization,
+    Capture,
+    PayPalOrder,
+    Refund,
+    Subscription,
+    SubscriptionPayment,
+)
+from ..money import parse_amount, parse_amount_payload
+from ..signals import (
+    payment_captured,
+    payment_denied,
+    payment_refunded,
+    subscription_activated,
+    subscription_cancelled,
+    subscription_expired,
+    subscription_payment_completed,
+    subscription_payment_failed,
+    subscription_suspended,
+)
 
 __all__ = [
     "register_handler",
@@ -259,3 +276,159 @@ def handle_authorization_event(event):
         logger.info("authorization %s is not ours, ignoring %s", paypal_id, event.event_id)
         return
     authorization.update_from_payload(resource)
+
+
+# -- subscriptions ----------------------------------------------------------
+
+
+def _find_subscription(event, paypal_id):
+    """Locate the local subscription, or decide it is not ours.
+
+    Unlike captures there is no enclosing order to ask, so "unknown id" simply
+    means someone else's subscription — nothing to retry.
+    """
+    if not paypal_id:
+        return None
+    subscription = Subscription.objects.filter(paypal_id=paypal_id).first()
+    if subscription is None:
+        logger.info(
+            "subscription %s is not ours, ignoring %s", paypal_id, event.event_id
+        )
+    return subscription
+
+
+def _apply_subscription_status(event, status, signal=None):
+    resource = event.resource
+    subscription = _find_subscription(event, resource.get("id"))
+    if subscription is None:
+        return
+    subscription.update_from_payload(resource)
+    if subscription.status != status:
+        # The payload did not carry the status the event name implies; trust the
+        # event, since that is what PayPal is telling us happened.
+        subscription.status = status
+        subscription.save(update_fields=["status", "updated_at"])
+    if signal is not None:
+        signal.send(
+            sender=Subscription,
+            subscription=subscription,
+            target=subscription.target,
+            reason=resource.get("status_change_note") or "",
+        )
+
+
+@register_handler("BILLING.SUBSCRIPTION.CREATED")
+def handle_subscription_created(event):
+    """Not billable yet: it still needs the buyer's approval."""
+    subscription = _find_subscription(event, event.resource.get("id"))
+    if subscription is not None:
+        subscription.update_from_payload(event.resource)
+
+
+@register_handler("BILLING.SUBSCRIPTION.UPDATED")
+def handle_subscription_updated(event):
+    subscription = _find_subscription(event, event.resource.get("id"))
+    if subscription is not None:
+        subscription.update_from_payload(event.resource)
+
+
+@register_handler("BILLING.SUBSCRIPTION.ACTIVATED", "BILLING.SUBSCRIPTION.RE-ACTIVATED")
+def handle_subscription_activated(event):
+    _apply_subscription_status(
+        event, Subscription.Status.ACTIVE, subscription_activated
+    )
+
+
+@register_handler("BILLING.SUBSCRIPTION.SUSPENDED")
+def handle_subscription_suspended(event):
+    _apply_subscription_status(
+        event, Subscription.Status.SUSPENDED, subscription_suspended
+    )
+
+
+@register_handler("BILLING.SUBSCRIPTION.CANCELLED")
+def handle_subscription_cancelled(event):
+    _apply_subscription_status(
+        event, Subscription.Status.CANCELLED, subscription_cancelled
+    )
+
+
+@register_handler("BILLING.SUBSCRIPTION.EXPIRED")
+def handle_subscription_expired(event):
+    _apply_subscription_status(
+        event, Subscription.Status.EXPIRED, subscription_expired
+    )
+
+
+@register_handler("BILLING.SUBSCRIPTION.PAYMENT.FAILED")
+def handle_subscription_payment_failed(event):
+    """PayPal will retry per the plan, then suspend once the failures run out."""
+    resource = event.resource
+    subscription = _find_subscription(event, resource.get("id"))
+    if subscription is None:
+        return
+    subscription.update_from_payload(resource)
+    subscription_payment_failed.send(
+        sender=Subscription,
+        subscription=subscription,
+        target=subscription.target,
+        raw=resource,
+    )
+
+
+@register_handler("PAYMENT.SALE.COMPLETED")
+def handle_subscription_payment(event):
+    """A recurring charge. The link to the subscription is ``billing_agreement_id``.
+
+    A sale without one is a one-off payment from the legacy Payments API, not our
+    business.
+    """
+    resource = event.resource
+    subscription_id = resource.get("billing_agreement_id")
+    if not subscription_id:
+        logger.info("sale %s carries no subscription, ignoring", resource.get("id"))
+        return
+    subscription = _find_subscription(event, subscription_id)
+    if subscription is None:
+        return
+
+    sale_id = resource.get("id")
+    if not sale_id:
+        return
+
+    amount, currency = _sale_amount(resource, subscription)
+    payment, created = SubscriptionPayment.objects.get_or_create(
+        paypal_id=sale_id,
+        defaults={
+            "subscription": subscription,
+            "amount": amount,
+            "currency": currency,
+            "raw": resource,
+        },
+    )
+    payment.update_from_payload(resource)
+    subscription_payment_completed.send(
+        sender=Subscription,
+        subscription=subscription,
+        target=subscription.target,
+        payment=payment,
+        created=created,
+    )
+
+
+def _sale_amount(resource, subscription):
+    """Amount of a sale resource, which nests it differently from a capture."""
+    payload_amount = resource.get("amount")
+    if isinstance(payload_amount, dict):
+        # Sales use {"total": "9.99", "currency": "EUR"}, not currency_code/value.
+        total = payload_amount.get("total")
+        currency = payload_amount.get("currency") or payload_amount.get("currency_code")
+        if total is not None and currency:
+            try:
+                return parse_amount(total), str(currency).upper()
+            except PayPalAmountError:
+                logger.warning("sale %s has an unreadable amount", resource.get("id"))
+        return parse_amount_payload(payload_amount)
+    raise PayPalAmountError(
+        f"sale {resource.get('id') or '<unknown>'} has no readable amount"
+    )

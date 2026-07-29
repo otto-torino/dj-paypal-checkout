@@ -11,15 +11,24 @@ from paypal_checkout.admin import (
     CaptureAdmin,
     CaptureInline,
     PayPalOrderAdmin,
+    PlanAdmin,
+    ProductAdmin,
     RefundAdmin,
     RefundInline,
+    SubscriptionAdmin,
+    SubscriptionPaymentAdmin,
+    SubscriptionPaymentInline,
     WebhookEventAdmin,
 )
 from paypal_checkout.models import (
     Authorization,
     Capture,
     PayPalOrder,
+    Plan,
+    Product,
     Refund,
+    Subscription,
+    SubscriptionPayment,
     WebhookEvent,
 )
 
@@ -35,6 +44,15 @@ class AdminRegistrationTests(TestCase):
             django_admin.site._registry[WebhookEvent], WebhookEventAdmin
         )
         self.assertIsInstance(django_admin.site._registry[Refund], RefundAdmin)
+        self.assertIsInstance(django_admin.site._registry[Product], ProductAdmin)
+        self.assertIsInstance(django_admin.site._registry[Plan], PlanAdmin)
+        self.assertIsInstance(
+            django_admin.site._registry[Subscription], SubscriptionAdmin
+        )
+        self.assertIsInstance(
+            django_admin.site._registry[SubscriptionPayment],
+            SubscriptionPaymentAdmin,
+        )
 
 
 class ReadOnlyTests(TestCase):
@@ -46,11 +64,16 @@ class ReadOnlyTests(TestCase):
             CaptureAdmin(Capture, django_admin.site),
             RefundAdmin(Refund, django_admin.site),
             WebhookEventAdmin(WebhookEvent, django_admin.site),
+            ProductAdmin(Product, django_admin.site),
+            PlanAdmin(Plan, django_admin.site),
+            SubscriptionAdmin(Subscription, django_admin.site),
+            SubscriptionPaymentAdmin(SubscriptionPayment, django_admin.site),
         )
         self.inlines = (
             CaptureInline(PayPalOrder, django_admin.site),
             AuthorizationInline(PayPalOrder, django_admin.site),
             RefundInline(Capture, django_admin.site),
+            SubscriptionPaymentInline(Subscription, django_admin.site),
         )
 
     def test_nothing_can_be_added_changed_or_deleted(self):
@@ -76,8 +99,8 @@ class ReadOnlyTests(TestCase):
     def test_request_id_is_visible_for_support(self):
         """Answering "which key did we send?" is the point of this admin."""
         for model_admin in self.admins:
-            if model_admin.model is WebhookEvent:
-                continue  # inbound: no key of ours, but the transmission id
+            if model_admin.model in (WebhookEvent, SubscriptionPayment):
+                continue  # inbound rows: no request id of ours
             with self.subTest(admin=type(model_admin).__name__):
                 self.assertIn("request_id", model_admin.readonly_fields)
                 self.assertIn("request_id", model_admin.search_fields)
@@ -92,6 +115,7 @@ class ReadOnlyTests(TestCase):
 class EnvironmentColumnTests(TestCase):
     def setUp(self):
         self.order_admin = PayPalOrderAdmin(PayPalOrder, django_admin.site)
+        self.product_admin = ProductAdmin(Product, django_admin.site)
 
     def test_sandbox_and_live_are_distinguishable_at_a_glance(self):
         sandbox = PayPalOrder.objects.start(amount=Decimal("1.00"), currency="EUR", live=False)
@@ -99,6 +123,10 @@ class EnvironmentColumnTests(TestCase):
 
         self.assertEqual(self.order_admin.environment(sandbox), "sandbox")
         self.assertEqual(self.order_admin.environment(live), "live")
+        self.assertEqual(
+            self.product_admin.environment(Product(live=False)), "sandbox"
+        )
+        self.assertEqual(self.product_admin.environment(Product(live=True)), "live")
 
     def test_webhook_events_show_environment_and_processed_state(self):
         webhook_admin = WebhookEventAdmin(WebhookEvent, django_admin.site)

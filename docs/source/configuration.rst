@@ -74,10 +74,12 @@ default it is **refused**: the client raises
 :class:`~paypal_checkout.exceptions.PayPalIdempotencyError` *before* anything
 reaches PayPal, not even the token request.
 
-You should not have to think about this. Every helper in
-:mod:`paypal_checkout.orders` and :mod:`paypal_checkout.payments` supplies a
-persisted key, and operations that genuinely need none — like verifying a webhook
-signature — declare
+You should not have to think about this. Helpers in
+:mod:`paypal_checkout.orders` and :mod:`paypal_checkout.payments`, plus the
+create helpers in :mod:`paypal_checkout.subscriptions`, supply a persisted key.
+Repeatable subscription lifecycle transitions declare an optional policy and
+are not automatically retried. Operations that genuinely need no key — like
+verifying a webhook signature — declare
 :attr:`Idempotency.NOT_APPLICABLE <paypal_checkout.client.Idempotency>`. Strict
 mode therefore only trips when a call site using the raw client has not decided
 how its operation is identified. That per-operation policy is also what keeps it

@@ -2,14 +2,15 @@
 
 Orders v2 checkout (create, authorize, capture), refunds and voids, verified
 webhooks, models that survive an interrupted call, signals and a read-only
-admin. Subscriptions, Vault and Card Fields are not implemented yet.
+admin. Subscriptions v1 includes products, plans, lifecycle webhooks and
+recurring-payment records. Vault and Card Fields are not implemented yet.
 
 Note that ``models``, ``orders``, ``payments`` and ``webhooks.views`` are *not*
 re-exported here: they touch the ORM, so importing them at package-import time
 would run before the app registry is ready. Import them from their modules.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .client import AsyncPayPalClient, Idempotency, PayPalClient  # noqa: E402
 from .config import PayPalConfig, get_config  # noqa: E402
@@ -31,6 +32,12 @@ from .signals import (  # noqa: E402
     payment_captured,
     payment_denied,
     payment_refunded,
+    subscription_activated,
+    subscription_cancelled,
+    subscription_expired,
+    subscription_payment_completed,
+    subscription_payment_failed,
+    subscription_suspended,
 )
 
 __all__ = [
@@ -46,6 +53,12 @@ __all__ = [
     "payment_captured",
     "payment_denied",
     "payment_refunded",
+    "subscription_activated",
+    "subscription_suspended",
+    "subscription_cancelled",
+    "subscription_expired",
+    "subscription_payment_completed",
+    "subscription_payment_failed",
     "PayPalError",
     "PayPalConfigurationError",
     "PayPalIdempotencyError",

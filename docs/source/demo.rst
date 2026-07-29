@@ -55,6 +55,15 @@ Then watch the ``WebhookEvent`` rows in the admin: ``processed`` and
 ``payment_captured`` receiver runs whether the confirmation arrived from the
 capture call or from the webhook. See :doc:`webhooks`.
 
+Scope
+-----
+
+The runnable demo deliberately remains a one-off checkout example. Subscription
+support has more merchant-specific choices — plan cadence, trials, return URLs
+and the host project's membership model — so a generic demo would imply policy
+the library does not own. See :doc:`subscriptions` for the complete server-side
+flow and use the read-only admin to inspect its local rows.
+
 Testing a payment
 -----------------
 

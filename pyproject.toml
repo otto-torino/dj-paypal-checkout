@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dj-paypal-checkout"
-version = "0.1.0"
+version = "0.2.0"
 authors = [
     { name = "Otto", email = "opensource@otto.srl" },
 ]
@@ -45,7 +45,16 @@ crypto = [
 include-package-data = true
 
 [tool.setuptools.packages.find]
-exclude = ["example", "example.*", "tests", "tests.*", "docs", "docs.*"]
+exclude = [
+    "docs",
+    "docs.*",
+    "example",
+    "example.*",
+    "scripts",
+    "scripts.*",
+    "tests",
+    "tests.*",
+]
 
 [project.urls]
 Homepage = "https://github.com/otto-torino/dj-paypal-checkout"

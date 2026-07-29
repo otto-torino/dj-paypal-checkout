@@ -3,8 +3,7 @@ API reference
 
 .. note::
 
-   Subscriptions, Vault and Card Fields are not implemented yet, so nothing is
-   documented for them here.
+   Vault and Card Fields are not implemented.
 
 Configuration
 -------------
@@ -47,6 +46,13 @@ Payments
 --------
 
 .. automodule:: paypal_checkout.payments
+   :members:
+   :member-order: bysource
+
+Subscriptions
+-------------
+
+.. automodule:: paypal_checkout.subscriptions
    :members:
    :member-order: bysource
 
