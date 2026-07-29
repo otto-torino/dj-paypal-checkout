@@ -3,7 +3,7 @@
 Hand-written on top of ``httpx`` rather than wrapping PayPal's
 ``paypal-server-sdk``: that SDK is sync-only and covers neither webhook
 signature verification nor the subscription plans/products catalog, both of
-which this library needs (see PROGRESS.md, decision 1).
+which this library needs.
 
 **Retry safety is the important part of this module.** A blind retry of a
 capture would charge the buyer twice, so a non-idempotent request is retried
@@ -137,8 +137,8 @@ class _BasePayPalClient:
         """Report a mutating request that cannot be retried safely.
 
         With ``STRICT_IDEMPOTENCY`` on this raises before any I/O happens; the
-        warning is the *migration* path towards that, not the intended
-        end state (see PROGRESS.md).
+        warning keeps unsafe calls observable when strict enforcement is
+        temporarily disabled.
 
         The warning is structured — ``paypal_method``, ``paypal_endpoint`` (a
         templated, id-free path) and ``paypal_issue`` land on the ``LogRecord``

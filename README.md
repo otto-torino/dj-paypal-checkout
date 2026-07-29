@@ -23,7 +23,7 @@ refunds and **verified webhooks**, with models, signals and admin.
 > Browser-side Card Fields still requires merchant enablement and application UI.
 >
 > It has not been run against live PayPal traffic yet, and the API may still
-> change on minor versions before 1.0. See [PROGRESS.md](PROGRESS.md).
+> change on minor versions before 1.0.
 
 ## Why another PayPal library?
 
