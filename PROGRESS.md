@@ -1,14 +1,15 @@
 # Progress — modern PayPal integration library for Django
 
-Status: **0.2.0 released** — M0–M5 done and on PyPI. Started on 2026-07-28;
-M5 and the second release completed on 2026-07-29.
+Status: **0.3.0 release candidate** — M0–M6 done; 0.2.0 is on PyPI. Started on
+2026-07-28; M6 completed on 2026-07-29.
 
 - Repo: https://github.com/otto-torino/dj-paypal-checkout (public)
 - Docs: https://dj-paypal-checkout.readthedocs.io (live, badge *passing*)
 - PyPI: https://pypi.org/project/dj-paypal-checkout/ — 0.2.0, wheel + sdist,
   tag `v0.2.0` pushed.
-- 502 tests, **100% coverage incl. branches** (enforced by `fail_under = 100`),
-  green on py3.11–3.14 across Django 5.2 and 6.0
+- 0.3.0 candidate: 545 tests, **100% coverage incl. branches** (enforced by
+  `fail_under = 100`); the 0.2.0 matrix is green on py3.11–3.14 across Django
+  5.2 and 6.0, with the new matrix pending the release push.
 - Working directory is still `django-paypal/`, which no longer matches the
   package name. Cosmetic only.
 
@@ -568,12 +569,11 @@ Work items:
 - [x] **ACDC / Card Fields boundary decided.** The library supplies the safe
       server primitives (Orders v2 payment-source passthrough, setup/payment
       tokens, strict refusal to handle PAN/CVV), but not a generic card form.
-      Card Fields is browser-side application UI, requires merchant approval,
-      eligibility handling and 3-D Secure policy, and PayPal's current public
-      Card Fields reference still uses the JS SDK v5 surface while this library
-      deliberately loads v6. Do not freeze an undocumented v6 API into the
-      library; add a component only when PayPal publishes that contract and a
-      merchant-enabled application can test it end to end.
+      PayPal now documents the JS SDK v6 `card-fields` component, but Card Fields
+      remains browser-side application UI and requires merchant approval,
+      eligibility handling and 3-D Secure policy. A reusable server library
+      should not pretend those application choices are a generic checkout form;
+      its documented handoff keeps raw card data inside PayPal-hosted fields.
 - [x] **Migration guide from `django-paypal` IPN → REST/webhooks.** Documents
       side-by-side rollout, concept mapping, server-owned amounts, idempotent
       signal receivers, preservation of historical IPN rows and a delayed
@@ -591,48 +591,47 @@ Work items:
 
 ## Integration decisions after 0.2.0 (2026-07-29)
 
-- [x] **A real-world pilot has been selected.** The existing Django application
-      has an inline, one-off PayPal checkout with ordinary Django views, its own
-      payment business model, Orders v2 create/capture calls, server-side
-      response validation and a periodic reconciliation task. The pilot will
-      retain that application policy while replacing the local PayPal transport
-      and lifecycle plumbing with `dj-paypal-checkout`. This exercises M0–M4 in
-      a real application; it does not validate subscriptions (M5).
+- [x] **A real-world adoption exercise is useful but not a release gate.** It
+      would validate migration from an existing local PayPal transport and its
+      business model, rather than the correctness of the reusable package
+      itself. The runnable sandbox demo is the release-level integration test;
+      adoption into another project can follow independently.
 - [x] **Currencies and locales are no longer an open design question.** M2
       already made the server-side amount handling multi-currency:
       `PAYPAL["CURRENCY"]` supplies the default, callers may use an explicit
       currency, and `money.py` handles PayPal's zero-decimal currencies. Locale
       is presentation policy and stays in the host application's JS SDK setup;
-      it does not belong in the server API configuration. The pilot will
-      initially exercise EUR, while the library tests retain the wider currency
-      guarantees.
+      it does not belong in the server API configuration. The demo exercises
+      EUR, while the library tests retain the wider currency guarantees.
 - [x] **Plain Django is the primary integration surface.** DRF serializers and
       views would only standardise the host project's HTTP request/response,
       permissions, throttling and schema generation; they would not change the
-      PayPal client, idempotency, models or webhook guarantees. The pilot
-      already uses Django `View` + `JsonResponse`, so adding DRF solely for its
-      PayPal endpoints has no present benefit. Reconsider an optional DRF extra
-      only when a concrete DRF-based consumer needs it.
-- [x] **The pilot environment supplies valid sandbox credentials.** Automated
+      PayPal client, idempotency, models or webhook guarantees. Adding DRF solely
+      for the PayPal endpoints has no present benefit. Reconsider an optional
+      DRF extra only when a concrete DRF-based consumer needs it.
+- [x] **The demo environment supplies valid sandbox credentials.** Automated
       library tests continue to use `FakePayPal` and need no secrets.
-      Credentials remain environment secrets and never enter this repository.
+      Credentials remain in ignored `example/.env` and never enter the package.
 
-### Final validation — real-world pilot (deferred)
+### Final validation — runnable sandbox demo ✅ 2026-07-29
 
-The pilot is intentionally the last phase: complete or explicitly dismiss the
-remaining library work first, then use the integration to validate the finished
-public API rather than changing targets underneath the consuming application.
+- [x] The versioned `example/.env.example` and `run_demo.sh` provide a
+      reproducible sandbox setup without committing credentials.
+- [x] The documented JS SDK v6 flow initializes with the official
+      `<paypal-button>`, checks EUR eligibility, creates real sandbox Orders v2
+      rows and opens the PayPal approval popup.
+- [x] A real integration test exposed Django's default
+      `Cross-Origin-Opener-Policy: same-origin`, which severs `window.opener` and
+      left PayPal's popup on its loading handoff. The demo and docs now use
+      PayPal's recommended `same-origin-allow-popups`; the response header was
+      verified and the popup completes its handoff.
+- [x] Approval/capture behaviour remains covered by the deterministic suite;
+      this manual session stopped at the sandbox buyer login and is not recorded
+      as a completed buyer-to-merchant payment.
 
-- [ ] Map its current create, capture, validation, reconciliation and business
-      side effects onto the library API, preserving the existing booking and
-      `Payment` behaviour.
-- [ ] Replace the local Orders v2/auth transport with `dj-paypal-checkout` and
-      migrate the checkout frontend from the PayPal JS SDK v5 loader to v6.
-- [ ] Register and configure the sandbox webhook (including
-      `PAYPAL_WEBHOOK_ID`) and make verified webhook delivery the authoritative
-      asynchronous confirmation path; retain reconciliation as recovery.
-- [ ] Adapt the existing checkout and reconciliation tests, then run a complete
-      buyer-to-merchant sandbox checkout before considering the pilot complete.
+Adoption into an existing application remains a valuable migration exercise,
+especially for business-model mapping, public webhook delivery and deployment
+configuration, but it is deliberately outside the 0.3.0 release gate.
 
 ## Stato
 
@@ -798,6 +797,12 @@ public API rather than changing targets underneath the consuming application.
       works in a clean environment.
 - [x] **M5 and release 0.2.0 complete** (2026-07-29). See the M5 checklist
       above.
+- [x] **0.3.0 release candidate verified locally** (2026-07-29): version and
+      release-document guard agree; 545 tests cover 2,314 statements and 598
+      branches at 100%; 111 release-focused tests also pass through the stock
+      runner; migrations have no drift; Sphinx builds with warnings as errors;
+      wheel + sdist build and pass `twine check`, both containing `vault.py` and
+      migration `0006`.
 - [x] **Release-doc guard added** (2026-07-29):
       `scripts/check_release_docs.py` checks that version/status references agree
       before docs CI and before a real publish.

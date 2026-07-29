@@ -12,7 +12,7 @@ them at package-import time would run before the app registry is ready. Import
 them from their modules.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .client import AsyncPayPalClient, Idempotency, PayPalClient  # noqa: E402
 from .config import PayPalConfig, get_config  # noqa: E402

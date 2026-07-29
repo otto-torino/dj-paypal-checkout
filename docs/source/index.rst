@@ -6,15 +6,15 @@ checkout, refunds and **verified webhooks**, with models, signals and admin.
 
 .. note::
 
-   **Latest release: 0.2.0.** One-off payments are covered end to end: Orders v2
+   **Version 0.3.0.** One-off payments are covered end to end: Orders v2
    create/authorize/capture, refunds and voids, verified webhooks, models that
    survive an interrupted call, signals, a reconciliation command and a read-only
    admin. Subscriptions v1 adds products, plans, create/revise and lifecycle
    operations, verified lifecycle/payment webhooks and recurring-payment
-   records. The current development branch additionally adds Payment Method
-   Tokens v3: setup/payment tokens, safe Card Fields handoff, verified Vault
-   webhooks and local audit records. The browser-side Card Fields integration
-   still depends on merchant enablement and application UI.
+   records. Payment Method Tokens v3 adds setup/payment tokens, safe Card Fields
+   handoff, verified Vault webhooks and local audit records. The browser-side
+   Card Fields integration still depends on merchant enablement and application
+   UI.
 
    It has not been run against live PayPal traffic, and the API may still change
    on minor versions before 1.0.
