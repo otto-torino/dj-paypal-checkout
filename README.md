@@ -10,14 +10,16 @@
 A modern, REST-first PayPal integration for Django: **Orders v2** checkout,
 refunds and **verified webhooks**, with models, signals and admin.
 
-> **Status: 0.2.0.** One-off payments are covered end to end:
+> **Latest release: 0.2.0.** One-off payments are covered end to end:
 > configuration, OAuth2 auth with token caching, sync/async HTTP clients, amount
 > handling, models with persisted idempotency keys, the Orders v2
 > create/authorize/capture flows, refunds and voids, verified webhooks, a
 > reconciliation command, signals, a read-only admin and a runnable demo.
 > Subscriptions add the products/plans catalog, create/revise and lifecycle
 > operations, verified lifecycle/payment webhooks and recurring-payment records.
-> Not yet: Vault and Card Fields.
+> The current development branch additionally adds Payment Method Tokens v3:
+> setup/payment tokens, verified Vault webhooks and local audit records.
+> Browser-side Card Fields still requires merchant enablement and application UI.
 >
 > It has not been run against live PayPal traffic yet, and the API may still
 > change on minor versions before 1.0. See [PROGRESS.md](PROGRESS.md).
@@ -37,8 +39,9 @@ This library targets the current REST APIs and fills those gaps:
 | Checkout | Orders v2 (create → approve → capture) |
 | Captures/refunds | Payments v2, with a local guard against over-refunding |
 | Notifications | Webhooks with RSA-SHA256 signature verification — no IPN |
-| Client side | JS SDK **v6** (standalone buttons, Card Fields) |
+| Client side | JS SDK **v6** loader; checkout UI remains application policy |
 | Subscriptions | Subscriptions v1 + plans/products catalog and lifecycle webhooks |
+| Saved methods | Payment Method Tokens v3 (setup tokens → permanent vault tokens) |
 | Async | sync **and** async client, same surface |
 
 ## Design principles

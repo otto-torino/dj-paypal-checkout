@@ -32,6 +32,8 @@ __all__ = [
     "Plan",
     "Subscription",
     "SubscriptionPayment",
+    "SetupToken",
+    "PaymentToken",
     "WebhookEvent",
 ]
 
@@ -102,6 +104,16 @@ def subscription_request_id(subscription_pk):
     see :mod:`paypal_checkout.subscriptions` for why.
     """
     return f"subscription:{subscription_pk}:create"
+
+
+def setup_token_request_id(setup_token_pk):
+    """Idempotency key for creating a temporary Vault setup token."""
+    return f"setup-token:{setup_token_pk}:create"
+
+
+def payment_token_request_id(payment_token_pk):
+    """Idempotency key for exchanging a setup token for a permanent token."""
+    return f"payment-token:{payment_token_pk}:create"
 
 
 def _start_with_key(manager, key_builder, **fields):
@@ -992,4 +1004,259 @@ class SubscriptionPayment(models.Model):
         self.raw = payload
         if save:
             self.save(update_fields=["status", "raw", "updated_at"])
+        return self
+
+
+def _vault_payment_source(payload):
+    """Return the payment-source type without assuming a particular instrument."""
+    payment_source = payload.get("payment_source")
+    if not isinstance(payment_source, dict) or not payment_source:
+        return ""
+    return str(next(iter(payment_source)))[:32]
+
+
+def _vault_customer(payload):
+    customer = payload.get("customer")
+    return customer if isinstance(customer, dict) else {}
+
+
+_SENSITIVE_VAULT_KEYS = frozenset(
+    {"number", "security_code", "card_number", "cvv", "cvv2"}
+)
+
+
+def _sanitize_vault_payload(value):
+    """Copy a Vault payload while refusing to persist card secrets."""
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_vault_payload(item)
+            for key, item in value.items()
+            if str(key).lower() not in _SENSITIVE_VAULT_KEYS
+        }
+    if isinstance(value, list):
+        return [_sanitize_vault_payload(item) for item in value]
+    return value
+
+
+class SetupTokenQuerySet(models.QuerySet):
+    def pending(self):
+        """Setup tokens that PayPal has not yet confirmed."""
+        return self.filter(status=SetupToken.Status.INITIATED)
+
+    def for_target(self, target):
+        return self.filter(
+            content_type=ContentType.objects.get_for_model(target),
+            object_id=str(target.pk),
+        )
+
+
+class SetupTokenManager(models.Manager.from_queryset(SetupTokenQuerySet)):
+    def start(self, *, live, target=None, merchant_customer_id=""):
+        """Persist the setup-token attempt and key before calling PayPal."""
+        return _start_with_key(
+            self,
+            setup_token_request_id,
+            live=live,
+            merchant_customer_id=merchant_customer_id or "",
+            **SetupToken.target_fields(target),
+        )
+
+
+class SetupToken(TargetMixin, PendingAttemptMixin):
+    """A temporary Payment Method Tokens v3 setup token."""
+
+    class Status(models.TextChoices):
+        INITIATED = "INITIATED", "Initiated locally"
+        CREATED = "CREATED", "Created"
+        PAYER_ACTION_REQUIRED = "PAYER_ACTION_REQUIRED", "Payer action required"
+        APPROVED = "APPROVED", "Approved"
+        VAULTED = "VAULTED", "Vaulted"
+        TOKENIZED = "TOKENIZED", "Tokenized"
+
+    paypal_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    request_id = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    status = models.CharField(max_length=32, choices=Status, default=Status.INITIATED)
+    customer_id = models.CharField(max_length=64, blank=True)
+    merchant_customer_id = models.CharField(max_length=255, blank=True)
+    payment_source_type = models.CharField(max_length=32, blank=True)
+    live = models.BooleanField(default=False)
+    raw = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = SetupTokenManager()
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=("content_type", "object_id")),
+            models.Index(fields=("status", "live")),
+            models.Index(fields=("customer_id", "live")),
+        ]
+
+    def __str__(self):
+        return self.paypal_id or f"{self.get_status_display()} #{self.pk}"
+
+    def approve_url(self):
+        """The PayPal-hosted approval URL, when payer action is required."""
+        for link in self.raw.get("links") or []:
+            if isinstance(link, dict) and link.get("rel") == "approve":
+                return link.get("href")
+        return None
+
+    def update_from_payload(self, payload, *, save=True):
+        fields = ["paypal_id", "status", "customer_id", "merchant_customer_id",
+                  "payment_source_type", "raw", "updated_at"]
+        paypal_id = payload.get("id")
+        if paypal_id:
+            self.paypal_id = paypal_id
+        status = payload.get("status")
+        if status in self.Status.values:
+            self.status = status
+        customer = _vault_customer(payload)
+        if customer.get("id"):
+            self.customer_id = customer["id"]
+        if customer.get("merchant_customer_id"):
+            self.merchant_customer_id = customer["merchant_customer_id"]
+        source_type = _vault_payment_source(payload)
+        if source_type:
+            self.payment_source_type = source_type
+        self.raw = _sanitize_vault_payload(payload)
+        if save:
+            self.save(update_fields=fields)
+        return self
+
+
+class PaymentTokenQuerySet(models.QuerySet):
+    def active(self):
+        return self.filter(status=PaymentToken.Status.ACTIVE)
+
+    def for_customer(self, customer_id, *, live=None):
+        queryset = self.filter(customer_id=customer_id)
+        return queryset if live is None else queryset.filter(live=live)
+
+    def for_target(self, target):
+        return self.filter(
+            content_type=ContentType.objects.get_for_model(target),
+            object_id=str(target.pk),
+        )
+
+
+class PaymentTokenManager(models.Manager.from_queryset(PaymentTokenQuerySet)):
+    def start(
+        self,
+        *,
+        live,
+        setup_token=None,
+        target=None,
+        customer_id="",
+        merchant_customer_id="",
+    ):
+        """Persist the payment-token attempt and key before calling PayPal."""
+        if setup_token is not None:
+            existing = self.filter(setup_token=setup_token).first()
+            if existing is not None and existing.is_unconfirmed:
+                return existing
+        if target is None and setup_token is not None:
+            target = setup_token.target
+        return _start_with_key(
+            self,
+            payment_token_request_id,
+            live=live,
+            setup_token=setup_token,
+            customer_id=customer_id
+            or (setup_token.customer_id if setup_token is not None else ""),
+            merchant_customer_id=merchant_customer_id
+            or (
+                setup_token.merchant_customer_id
+                if setup_token is not None
+                else ""
+            ),
+            **PaymentToken.target_fields(target),
+        )
+
+
+class PaymentToken(TargetMixin, PendingAttemptMixin):
+    """A reusable vaulted payment method.
+
+    Only PayPal's token and masked response metadata are stored. Applications
+    must never put a PAN or security code in ``raw``.
+    """
+
+    class Status(models.TextChoices):
+        INITIATED = "INITIATED", "Initiated locally"
+        ACTIVE = "ACTIVE", "Active"
+        DELETION_PENDING = "DELETION_PENDING", "Deletion pending"
+        DELETED = "DELETED", "Deleted"
+
+    setup_token = models.OneToOneField(
+        SetupToken,
+        related_name="payment_token",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    paypal_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    request_id = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    status = models.CharField(max_length=32, choices=Status, default=Status.INITIATED)
+    customer_id = models.CharField(max_length=64, blank=True)
+    merchant_customer_id = models.CharField(max_length=255, blank=True)
+    payment_source_type = models.CharField(max_length=32, blank=True)
+    live = models.BooleanField(default=False)
+    raw = models.JSONField(default=dict, blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = PaymentTokenManager()
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=("content_type", "object_id")),
+            models.Index(fields=("status", "live")),
+            models.Index(fields=("customer_id", "live")),
+        ]
+
+    def __str__(self):
+        return self.paypal_id or f"{self.get_status_display()} #{self.pk}"
+
+    @property
+    def is_active(self):
+        return self.status == self.Status.ACTIVE
+
+    def update_from_payload(self, payload, *, save=True):
+        fields = ["paypal_id", "status", "customer_id", "merchant_customer_id",
+                  "payment_source_type", "raw", "deleted_at", "updated_at"]
+        paypal_id = payload.get("id")
+        if paypal_id:
+            self.paypal_id = paypal_id
+        self.status = self.Status.ACTIVE
+        self.deleted_at = None
+        customer = _vault_customer(payload)
+        if customer.get("id"):
+            self.customer_id = customer["id"]
+        if customer.get("merchant_customer_id"):
+            self.merchant_customer_id = customer["merchant_customer_id"]
+        source_type = _vault_payment_source(payload)
+        if source_type:
+            self.payment_source_type = source_type
+        self.raw = _sanitize_vault_payload(payload)
+        if save:
+            self.save(update_fields=fields)
+        return self
+
+    def mark_deletion_pending(self, payload=None):
+        self.status = self.Status.DELETION_PENDING
+        if payload is not None:
+            self.raw = _sanitize_vault_payload(payload)
+        self.save(update_fields=["status", "raw", "updated_at"])
+        return self
+
+    def mark_deleted(self, payload=None):
+        self.status = self.Status.DELETED
+        self.deleted_at = timezone.now()
+        if payload is not None:
+            self.raw = _sanitize_vault_payload(payload)
+        self.save(update_fields=["status", "deleted_at", "raw", "updated_at"])
         return self

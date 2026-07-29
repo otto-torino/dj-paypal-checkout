@@ -17,8 +17,9 @@ models with persisted idempotency keys, Orders v2 create/authorize/capture,
 refunds and voids, verified webhooks with an atomic claim, a reconciliation
 command, signals, read-only admin, JS SDK v6 tags, runnable demo, and
 Subscriptions v1 with products/plans, lifecycle operations and recurring
-payment records.
-Not implemented: Vault and Card Fields (M6).
+payment records. Payment Method Tokens v3 adds setup/payment tokens, safe
+Card Fields handoff, Vault lifecycle webhooks and local audit records.
+Deliberately not shipped: a generic browser-side Card Fields form (see M6).
 
 Goal: a maintained, REST-first PayPal library for Django — Orders v2 checkout,
 subscriptions, refunds and **webhooks** — replacing the IPN/PDT-era tooling.
@@ -43,10 +44,11 @@ the reasoning behind each decision, including the ones that turned out wrong.*
   Transaction Search v1, Subscriptions v1. Explicitly incomplete ("only 5 of
   PayPal's API endpoints"), **sync only**, and — importantly — **no webhook
   verification and no plans/products catalog**.
-- **Client side**: JS SDK **v6** is current (standalone buttons, iframe-based
-  integrations, `findEligibleMethods` for payment-method eligibility, Card
-  Fields for ACDC). v5 is the previous generation; legacy Hosted Fields are
-  superseded by Card Fields. `@paypal/react-paypal-js` wraps v6 for React.
+- **Client side**: JS SDK **v6** is current for standalone buttons and
+  iframe-based integrations, with `findEligibleMethods` for payment-method
+  eligibility. PayPal's public Card Fields reference still documents the v5
+  `/sdk/js` + `paypal.CardFields` surface; no stable v6 Card Fields contract is
+  published yet. `@paypal/react-paypal-js` provides the React integration.
 
 Conclusion: there is no library that gives a Django project Orders v2 +
 subscriptions + verified webhooks + models/signals out of the box. That is the gap.
@@ -91,7 +93,7 @@ paypal_checkout/
     verify.py      # offline RSA-SHA256 verification (+ API fallback)
     views.py       # ProcessWebhookView (csrf_exempt, raw body, dedupe)
     handlers.py    # event → signal dispatch registry
-  models.py        # Order, Capture, Refund, Subscription, WebhookEvent
+  models.py        # Orders, payments, subscriptions, Vault tokens, webhooks
   signals.py       # payment_captured, payment_denied, subscription_activated, …
   admin.py
   templatetags/    # JS SDK v6 script tag + button container helper
@@ -554,23 +556,83 @@ Work items:
       version-specific JSON endpoint: wheel 61,181 bytes and sdist 89,221 bytes,
       both requiring Python 3.11+.
 
-### M6 — later / maybe
-- [ ] Vault v3 (saved payment methods) — US-only, check we need it
-- [ ] ACDC / Card Fields (needs merchant onboarding, more compliance surface)
-- [ ] migration guide from `django-paypal` IPN → webhooks (run in parallel, then
-      cut over)
+### M6 — Vault and Card Fields boundary ✅ done 2026-07-29
+- [x] **Payment Method Tokens v3 (Vault)** — setup-token → payment-token flow,
+      persisted idempotency keys, read/list/delete helpers, environment guards,
+      generic target links, read-only admin and
+      `VAULT.PAYMENT-TOKEN.CREATED` / `.DELETION-INITIATED` / `.DELETED`
+      handlers. Raw PAN/CVV input is refused before any I/O and sanitized from
+      stored payloads; Card Fields must send it directly to PayPal. The earlier
+      "US-only" note was obsolete: current PayPal eligibility is product,
+      merchant and country dependent, not a reason to restrict the API model.
+- [x] **ACDC / Card Fields boundary decided.** The library supplies the safe
+      server primitives (Orders v2 payment-source passthrough, setup/payment
+      tokens, strict refusal to handle PAN/CVV), but not a generic card form.
+      Card Fields is browser-side application UI, requires merchant approval,
+      eligibility handling and 3-D Secure policy, and PayPal's current public
+      Card Fields reference still uses the JS SDK v5 surface while this library
+      deliberately loads v6. Do not freeze an undocumented v6 API into the
+      library; add a component only when PayPal publishes that contract and a
+      merchant-enabled application can test it end to end.
+- [x] **Migration guide from `django-paypal` IPN → REST/webhooks.** Documents
+      side-by-side rollout, concept mapping, server-owned amounts, idempotent
+      signal receivers, preservation of historical IPN rows and a delayed
+      retirement of the legacy endpoint rather than a flag-day replacement.
+- [x] **Local verification.** 545 tests cover 2,314 statements and 598 branches
+      at 100%; the 108 Vault/admin/webhook integration tests also pass through
+      the stock runner. This execution sandbox stalls on a second
+      `sync_to_async` cache operation even in an isolated two-call reproducer,
+      so the complete run used a process-local direct adapter for Django's
+      in-memory test cache only; no package or test-suite code contains that
+      adapter, and the normal CI matrix remains the release gate. Migration
+      state has no drift, Sphinx 9.1 builds with warnings as errors, wheel +
+      sdist build successfully, `twine check` passes, and both artifacts contain
+      `vault.py` plus migration `0006`.
 
-## Open questions
+## Integration decisions after 0.2.0 (2026-07-29)
 
-Still open; none blocks documenting and verifying M5:
+- [x] **A real-world pilot has been selected.** The existing Django application
+      has an inline, one-off PayPal checkout with ordinary Django views, its own
+      payment business model, Orders v2 create/capture calls, server-side
+      response validation and a periodic reconciliation task. The pilot will
+      retain that application policy while replacing the local PayPal transport
+      and lifecycle plumbing with `dj-paypal-checkout`. This exercises M0–M4 in
+      a real application; it does not validate subscriptions (M5).
+- [x] **Currencies and locales are no longer an open design question.** M2
+      already made the server-side amount handling multi-currency:
+      `PAYPAL["CURRENCY"]` supplies the default, callers may use an explicit
+      currency, and `money.py` handles PayPal's zero-decimal currencies. Locale
+      is presentation policy and stays in the host application's JS SDK setup;
+      it does not belong in the server API configuration. The pilot will
+      initially exercise EUR, while the library tests retain the wider currency
+      guarantees.
+- [x] **Plain Django is the primary integration surface.** DRF serializers and
+      views would only standardise the host project's HTTP request/response,
+      permissions, throttling and schema generation; they would not change the
+      PayPal client, idempotency, models or webhook guarantees. The pilot
+      already uses Django `View` + `JsonResponse`, so adding DRF solely for its
+      PayPal endpoints has no present benefit. Reconsider an optional DRF extra
+      only when a concrete DRF-based consumer needs it.
+- [x] **The pilot environment supplies valid sandbox credentials.** Automated
+      library tests continue to use `FakePayPal` and need no secrets.
+      Credentials remain environment secrets and never enter this repository.
 
-- Is this library driven by a concrete project (which one, and which flows does it
-  actually need)? Doesn't change the milestone order any more, but it decides how
-  opinionated the `example/` demo and the docs should be.
-- Currencies and locales in scope — EUR only, or multi-currency from the start?
-  Affects how much of the amount-scale logic is worth generalising in M2.
-- DRF integration (serializers/viewsets) or plain Django views only?
-- Sandbox credentials for `example/` and for manual testing — who provisions them?
+### Final validation — real-world pilot (deferred)
+
+The pilot is intentionally the last phase: complete or explicitly dismiss the
+remaining library work first, then use the integration to validate the finished
+public API rather than changing targets underneath the consuming application.
+
+- [ ] Map its current create, capture, validation, reconciliation and business
+      side effects onto the library API, preserving the existing booking and
+      `Payment` behaviour.
+- [ ] Replace the local Orders v2/auth transport with `dj-paypal-checkout` and
+      migrate the checkout frontend from the PayPal JS SDK v5 loader to v6.
+- [ ] Register and configure the sandbox webhook (including
+      `PAYPAL_WEBHOOK_ID`) and make verified webhook delivery the authoritative
+      asynchronous confirmation path; retain reconciliation as recovery.
+- [ ] Adapt the existing checkout and reconciliation tests, then run a complete
+      buyer-to-merchant sandbox checkout before considering the pilot complete.
 
 ## Stato
 
@@ -592,9 +654,9 @@ Still open; none blocks documenting and verifying M5:
       the refund work) and the `STRICT_IDEMPOTENCY` default flip (after M4).
 - [x] GitHub repo, CI and publishing set up — see *Release prerequisites* below.
       (The `CODECOV_TOKEN` this line used to demand turned out to be unnecessary.)
-- [ ] Consider renaming the working directory to `dj-paypal-checkout/`
-      (currently `django-paypal/`, which no longer matches the package). Purely
-      cosmetic: git and the remote do not care.
+- [x] **No working-directory rename.** The local checkout path is not versioned,
+      does not affect package metadata or the remote, and renaming it would add
+      no product value.
 - [x] **M3 webhooks done** (2026-07-28). 337 tests, 100% coverage, verification
       tested against real RSA signatures.
 - [x] **M4 done** (2026-07-28): refunds, voids, reconciliation command, strict

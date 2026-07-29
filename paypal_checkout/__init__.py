@@ -3,11 +3,13 @@
 Orders v2 checkout (create, authorize, capture), refunds and voids, verified
 webhooks, models that survive an interrupted call, signals and a read-only
 admin. Subscriptions v1 includes products, plans, lifecycle webhooks and
-recurring-payment records. Vault and Card Fields are not implemented yet.
+recurring-payment records. Payment Method Tokens v3 provides Vault support.
+Card Fields remain an application-side, merchant-enabled integration.
 
-Note that ``models``, ``orders``, ``payments`` and ``webhooks.views`` are *not*
-re-exported here: they touch the ORM, so importing them at package-import time
-would run before the app registry is ready. Import them from their modules.
+Note that ``models``, ``orders``, ``payments``, ``vault`` and
+``webhooks.views`` are *not* re-exported here: they touch the ORM, so importing
+them at package-import time would run before the app registry is ready. Import
+them from their modules.
 """
 
 __version__ = "0.2.0"
@@ -32,6 +34,8 @@ from .signals import (  # noqa: E402
     payment_captured,
     payment_denied,
     payment_refunded,
+    payment_token_created,
+    payment_token_deleted,
     subscription_activated,
     subscription_cancelled,
     subscription_expired,
@@ -53,6 +57,8 @@ __all__ = [
     "payment_captured",
     "payment_denied",
     "payment_refunded",
+    "payment_token_created",
+    "payment_token_deleted",
     "subscription_activated",
     "subscription_suspended",
     "subscription_cancelled",

@@ -10,12 +10,14 @@ from django.contrib import admin
 from .models import (
     Authorization,
     Capture,
+    PaymentToken,
     PayPalOrder,
     Plan,
     Product,
     Refund,
     Subscription,
     SubscriptionPayment,
+    SetupToken,
     WebhookEvent,
 )
 
@@ -371,6 +373,82 @@ class SubscriptionPaymentAdmin(ReadOnlyModelAdmin):
         "status",
         "amount",
         "currency",
+        "raw",
+        "created_at",
+        "updated_at",
+    )
+
+
+@admin.register(SetupToken)
+class SetupTokenAdmin(ReadOnlyModelAdmin):
+    list_display = (
+        "__str__",
+        "status",
+        "payment_source_type",
+        "customer_id",
+        "environment",
+        "target",
+        "created_at",
+    )
+    list_filter = ("status", "payment_source_type", "live")
+    search_fields = (
+        "paypal_id",
+        "request_id",
+        "customer_id",
+        "merchant_customer_id",
+        "object_id",
+    )
+    date_hierarchy = "created_at"
+    readonly_fields = (
+        "paypal_id",
+        "request_id",
+        "status",
+        "customer_id",
+        "merchant_customer_id",
+        "payment_source_type",
+        "live",
+        "content_type",
+        "object_id",
+        "target",
+        "raw",
+        "created_at",
+        "updated_at",
+    )
+
+
+@admin.register(PaymentToken)
+class PaymentTokenAdmin(ReadOnlyModelAdmin):
+    list_display = (
+        "__str__",
+        "status",
+        "payment_source_type",
+        "customer_id",
+        "environment",
+        "target",
+        "created_at",
+    )
+    list_filter = ("status", "payment_source_type", "live")
+    search_fields = (
+        "paypal_id",
+        "request_id",
+        "customer_id",
+        "merchant_customer_id",
+        "object_id",
+    )
+    date_hierarchy = "created_at"
+    readonly_fields = (
+        "setup_token",
+        "paypal_id",
+        "request_id",
+        "status",
+        "customer_id",
+        "merchant_customer_id",
+        "payment_source_type",
+        "live",
+        "content_type",
+        "object_id",
+        "target",
+        "deleted_at",
         "raw",
         "created_at",
         "updated_at",

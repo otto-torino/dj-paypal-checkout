@@ -10,6 +10,7 @@ from paypal_checkout.admin import (
     AuthorizationInline,
     CaptureAdmin,
     CaptureInline,
+    PaymentTokenAdmin,
     PayPalOrderAdmin,
     PlanAdmin,
     ProductAdmin,
@@ -18,17 +19,20 @@ from paypal_checkout.admin import (
     SubscriptionAdmin,
     SubscriptionPaymentAdmin,
     SubscriptionPaymentInline,
+    SetupTokenAdmin,
     WebhookEventAdmin,
 )
 from paypal_checkout.models import (
     Authorization,
     Capture,
+    PaymentToken,
     PayPalOrder,
     Plan,
     Product,
     Refund,
     Subscription,
     SubscriptionPayment,
+    SetupToken,
     WebhookEvent,
 )
 
@@ -53,6 +57,12 @@ class AdminRegistrationTests(TestCase):
             django_admin.site._registry[SubscriptionPayment],
             SubscriptionPaymentAdmin,
         )
+        self.assertIsInstance(
+            django_admin.site._registry[SetupToken], SetupTokenAdmin
+        )
+        self.assertIsInstance(
+            django_admin.site._registry[PaymentToken], PaymentTokenAdmin
+        )
 
 
 class ReadOnlyTests(TestCase):
@@ -68,6 +78,8 @@ class ReadOnlyTests(TestCase):
             PlanAdmin(Plan, django_admin.site),
             SubscriptionAdmin(Subscription, django_admin.site),
             SubscriptionPaymentAdmin(SubscriptionPayment, django_admin.site),
+            SetupTokenAdmin(SetupToken, django_admin.site),
+            PaymentTokenAdmin(PaymentToken, django_admin.site),
         )
         self.inlines = (
             CaptureInline(PayPalOrder, django_admin.site),

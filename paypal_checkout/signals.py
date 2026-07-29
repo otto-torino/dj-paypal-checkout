@@ -8,11 +8,11 @@ more than once: a capture call and its confirming webhook describe one event,
 and PayPal retries webhooks. Mark your own order paid with a guard, do not
 increment counters blindly.
 
-All signals send ``sender=Capture`` and provide ``capture``, ``order`` and
+Payment signals send ``sender=Capture`` and provide ``capture``, ``order`` and
 ``target`` (the host project's object, or ``None`` when the order was not
-linked to one). ``payment_refunded`` additionally provides ``refund`` when the
-refund is known — a webhook can report a refund this project never initiated, in
-which case it is absent, so always accept ``**kwargs``.
+linked to one). Subscription and Vault signals use their corresponding local
+models as senders and document their payloads below. Always accept ``**kwargs``
+so receivers remain compatible as signal context grows.
 """
 
 from django.dispatch import Signal
@@ -27,6 +27,8 @@ __all__ = [
     "subscription_expired",
     "subscription_payment_completed",
     "subscription_payment_failed",
+    "payment_token_created",
+    "payment_token_deleted",
 ]
 
 #: Money captured successfully. ``capture.status == COMPLETED``.
@@ -70,3 +72,14 @@ subscription_payment_completed = Signal()
 #: ``payment_preferences``, and suspends the subscription once the allowed
 #: failures run out.
 subscription_payment_failed = Signal()
+
+
+# -- Vault ------------------------------------------------------------------
+#
+# These send ``sender=PaymentToken`` with ``payment_token`` and ``target``.
+
+#: A reusable payment method was saved successfully.
+payment_token_created = Signal()
+
+#: A saved payment method was removed from PayPal's vault.
+payment_token_deleted = Signal()

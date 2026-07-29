@@ -136,7 +136,9 @@ Out of the box: ``PAYMENT.CAPTURE.COMPLETED``, ``.DENIED``, ``.PENDING``,
 ``PAYMENT.AUTHORIZATION.CREATED``/``.VOIDED``. The development version also
 handles subscription create/update/lifecycle events,
 ``BILLING.SUBSCRIPTION.PAYMENT.FAILED`` and ``PAYMENT.SALE.COMPLETED``; see
-:doc:`subscriptions`.
+:doc:`subscriptions`. Payment Method Tokens add
+``VAULT.PAYMENT-TOKEN.CREATED``, ``.DELETION-INITIATED`` and ``.DELETED``; see
+:doc:`vault`.
 
 They update the local row and send the same signals the direct helper sends.
 

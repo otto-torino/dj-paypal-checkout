@@ -12,10 +12,13 @@ of "this is ours, but the row is not here yet".
 
 import logging
 
+from django.db.models import Q
+
 from ..exceptions import PayPalAmountError, PayPalWebhookNotReady
 from ..models import (
     Authorization,
     Capture,
+    PaymentToken,
     PayPalOrder,
     Refund,
     Subscription,
@@ -26,6 +29,8 @@ from ..signals import (
     payment_captured,
     payment_denied,
     payment_refunded,
+    payment_token_created,
+    payment_token_deleted,
     subscription_activated,
     subscription_cancelled,
     subscription_expired,
@@ -431,4 +436,82 @@ def _sale_amount(resource, subscription):
         return parse_amount_payload(payload_amount)
     raise PayPalAmountError(
         f"sale {resource.get('id') or '<unknown>'} has no readable amount"
+    )
+
+
+# -- Payment Method Tokens --------------------------------------------------
+
+
+def _vault_token(event):
+    """Find or adopt a token from a verified merchant webhook."""
+    resource = event.resource
+    paypal_id = resource.get("id")
+    if not paypal_id:
+        return None
+    token = PaymentToken.objects.filter(paypal_id=paypal_id).first()
+    if token is None:
+        customer = resource.get("customer")
+        customer_id = customer.get("id") if isinstance(customer, dict) else None
+        candidates = PaymentToken.objects.filter(
+            status=PaymentToken.Status.INITIATED,
+            live=event.live,
+        )
+        if customer_id:
+            candidates = candidates.filter(
+                Q(customer_id=customer_id)
+                | Q(setup_token__customer_id=customer_id)
+            )
+        else:
+            candidates = candidates.none()
+        pending_count = candidates.count()
+        if pending_count:
+            raise PayPalWebhookNotReady(
+                f"vault token {paypal_id} may match {pending_count} pending local "
+                f"attempt(s) for customer {customer_id}; retry after the API "
+                "response identifies the row."
+            )
+        token = PaymentToken.objects.create(
+            paypal_id=paypal_id,
+            live=event.live,
+        )
+    if token.live != event.live:
+        logger.warning(
+            "vault token %s arrived for the wrong environment; ignoring %s",
+            paypal_id,
+            event.event_id,
+        )
+        return None
+    return token
+
+
+@register_handler("VAULT.PAYMENT-TOKEN.CREATED")
+def handle_payment_token_created(event):
+    payment_token = _vault_token(event)
+    if payment_token is None:
+        return
+    payment_token.update_from_payload(event.resource)
+    payment_token_created.send(
+        sender=PaymentToken,
+        payment_token=payment_token,
+        target=payment_token.target,
+    )
+
+
+@register_handler("VAULT.PAYMENT-TOKEN.DELETION-INITIATED")
+def handle_payment_token_deletion_initiated(event):
+    payment_token = _vault_token(event)
+    if payment_token is not None:
+        payment_token.mark_deletion_pending(event.resource)
+
+
+@register_handler("VAULT.PAYMENT-TOKEN.DELETED")
+def handle_payment_token_deleted(event):
+    payment_token = _vault_token(event)
+    if payment_token is None:
+        return
+    payment_token.mark_deleted(event.resource)
+    payment_token_deleted.send(
+        sender=PaymentToken,
+        payment_token=payment_token,
+        target=payment_token.target,
     )

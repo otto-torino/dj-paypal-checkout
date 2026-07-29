@@ -644,15 +644,15 @@ class ProcessWebhookViewTests(OrderFixtureMixin, TestCase):
     def test_an_unhandled_event_type_is_stored_and_acknowledged(self):
         # An event type this library does not register a handler for. PayPal
         # delivers whatever the webhook subscription covers, so this is normal.
-        response = self.deliver(event_payload("VAULT.PAYMENT-TOKEN.CREATED"))
+        response = self.deliver(event_payload("CUSTOMER.DISPUTE.CREATED"))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["handlers"], 0)
         self.assertTrue(WebhookEvent.objects.get(event_id="WH-EVT-1").is_processed)
         self.assertNotIn(
-            "VAULT.PAYMENT-TOKEN.CREATED",
+            "CUSTOMER.DISPUTE.CREATED",
             registered_event_types(),
-            "pick another unhandled type if Vault support lands",
+            "pick another event type if dispute support lands",
         )
 
     def test_get_is_not_allowed(self):

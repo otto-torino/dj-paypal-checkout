@@ -6,12 +6,15 @@ checkout, refunds and **verified webhooks**, with models, signals and admin.
 
 .. note::
 
-   **Version 0.2.0.** One-off payments are covered end to end: Orders v2
+   **Latest release: 0.2.0.** One-off payments are covered end to end: Orders v2
    create/authorize/capture, refunds and voids, verified webhooks, models that
    survive an interrupted call, signals, a reconciliation command and a read-only
    admin. Subscriptions v1 adds products, plans, create/revise and lifecycle
    operations, verified lifecycle/payment webhooks and recurring-payment
-   records. Vault and Card Fields are not implemented yet.
+   records. The current development branch additionally adds Payment Method
+   Tokens v3: setup/payment tokens, safe Card Fields handoff, verified Vault
+   webhooks and local audit records. The browser-side Card Fields integration
+   still depends on merchant enablement and application UI.
 
    It has not been run against live PayPal traffic, and the API may still change
    on minor versions before 1.0.
@@ -36,9 +39,11 @@ This library targets the current REST APIs instead:
    * - Notifications
      - Webhooks with RSA-SHA256 signature verification — no IPN
    * - Client side
-     - JS SDK v6 (standalone buttons, Card Fields)
+     - JS SDK v6 loader; checkout UI remains application policy
    * - Subscriptions
      - Subscriptions v1 + plans/products catalog and lifecycle webhooks
+   * - Saved methods
+     - Payment Method Tokens v3 (setup tokens → permanent vault tokens)
    * - Async
      - sync and async client, same surface
 
@@ -50,7 +55,9 @@ This library targets the current REST APIs instead:
    configuration
    usage
    subscriptions
+   vault
    webhooks
+   migration_from_django_paypal
    demo
    api_reference
 
