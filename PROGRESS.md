@@ -1,15 +1,14 @@
 # Progress — modern PayPal integration library for Django
 
-Status: **0.3.0 release candidate** — M0–M6 done; 0.2.0 is on PyPI. Started on
-2026-07-28; M6 completed on 2026-07-29.
+Status: **0.3.0 released** — M0–M6 done and on PyPI. Started on 2026-07-28;
+M6 and the third release completed on 2026-07-29.
 
 - Repo: https://github.com/otto-torino/dj-paypal-checkout (public)
 - Docs: https://dj-paypal-checkout.readthedocs.io (live, badge *passing*)
-- PyPI: https://pypi.org/project/dj-paypal-checkout/ — 0.2.0, wheel + sdist,
-  tag `v0.2.0` pushed.
-- 0.3.0 candidate: 545 tests, **100% coverage incl. branches** (enforced by
-  `fail_under = 100`); the 0.2.0 matrix is green on py3.11–3.14 across Django
-  5.2 and 6.0, with the new matrix pending the release push.
+- PyPI: https://pypi.org/project/dj-paypal-checkout/ — 0.3.0, wheel + sdist,
+  tag `v0.3.0` pushed.
+- 545 tests, **100% coverage incl. branches** (enforced by `fail_under = 100`),
+  green on py3.11–3.14 across Django 5.2 and 6.0.
 - Working directory is still `django-paypal/`, which no longer matches the
   package name. Cosmetic only.
 
@@ -797,12 +796,14 @@ configuration, but it is deliberately outside the 0.3.0 release gate.
       works in a clean environment.
 - [x] **M5 and release 0.2.0 complete** (2026-07-29). See the M5 checklist
       above.
-- [x] **0.3.0 release candidate verified locally** (2026-07-29): version and
+- [x] **0.3.0 released** (2026-07-29), commit `97cccbf`: version and
       release-document guard agree; 545 tests cover 2,314 statements and 598
-      branches at 100%; 111 release-focused tests also pass through the stock
-      runner; migrations have no drift; Sphinx builds with warnings as errors;
-      wheel + sdist build and pass `twine check`, both containing `vault.py` and
-      migration `0006`.
+      branches at 100%; the full remote matrix is green on Python 3.11–3.14
+      across Django 5.2/6.0; migrations have no drift; Sphinx builds with
+      warnings as errors. Trusted publishing succeeded and the workflow pushed
+      tag `v0.3.0`. PyPI verification: wheel 67,256 bytes, sdist 97,863 bytes,
+      both requiring Python 3.11+ and containing `vault.py` plus migration
+      `0006`.
 - [x] **Release-doc guard added** (2026-07-29):
       `scripts/check_release_docs.py` checks that version/status references agree
       before docs CI and before a real publish.
