@@ -60,4 +60,5 @@ exclude = [
 Homepage = "https://github.com/otto-torino/dj-paypal-checkout"
 Repository = "https://github.com/otto-torino/dj-paypal-checkout"
 Documentation = "https://dj-paypal-checkout.readthedocs.io"
+PyPI = "https://pypi.org/project/dj-paypal-checkout/"
 "Bug Tracker" = "https://github.com/otto-torino/dj-paypal-checkout/issues"

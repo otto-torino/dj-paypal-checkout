@@ -3,6 +3,7 @@
 [![CI](https://github.com/otto-torino/dj-paypal-checkout/actions/workflows/ci.yml/badge.svg)](https://github.com/otto-torino/dj-paypal-checkout/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/otto-torino/dj-paypal-checkout/branch/main/graph/badge.svg)](https://codecov.io/gh/otto-torino/dj-paypal-checkout)
 [![Documentation](https://readthedocs.org/projects/dj-paypal-checkout/badge/?version=latest)](https://dj-paypal-checkout.readthedocs.io/)
+[![PyPI](https://img.shields.io/pypi/v/dj-paypal-checkout?logo=pypi&logoColor=white)](https://pypi.org/project/dj-paypal-checkout/)
 [![Django 5.2 | 6.0](https://img.shields.io/badge/Django-5.2%20%7C%206.0-092E20?logo=django&logoColor=white)](https://docs.djangoproject.com/en/stable/)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://docs.python.org/3/)
 [![PayPal REST](https://img.shields.io/badge/PayPal-Orders%20v2-003087?logo=paypal&logoColor=white)](https://developer.paypal.com/docs/api/orders/v2/)
