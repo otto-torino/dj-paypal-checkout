@@ -1,28 +1,23 @@
 # Progress — modern PayPal integration library for Django
 
-Status: **0.2.0 release candidate** — M0–M5 implemented, documented and
-release-verified. The version bump is ready to push; the protected GitHub/PyPI
-workflow still has to publish and tag it. Started on 2026-07-28; M5 work
-continued on 2026-07-29.
+Status: **0.2.0 released** — M0–M5 done and on PyPI. Started on 2026-07-28;
+M5 and the second release completed on 2026-07-29.
 
 - Repo: https://github.com/otto-torino/dj-paypal-checkout (public)
 - Docs: https://dj-paypal-checkout.readthedocs.io (live, badge *passing*)
-- PyPI: https://pypi.org/project/dj-paypal-checkout/ — 0.1.0, wheel + sdist,
-  tag `v0.1.0` pushed. Version 0.2.0 is the current release candidate.
-- 418 tests, **100% coverage incl. branches** (enforced by `fail_under = 100`),
+- PyPI: https://pypi.org/project/dj-paypal-checkout/ — 0.2.0, wheel + sdist,
+  tag `v0.2.0` pushed.
+- 502 tests, **100% coverage incl. branches** (enforced by `fail_under = 100`),
   green on py3.11–3.14 across Django 5.2 and 6.0
-- Current M5 working tree: 502 tests, **100% coverage incl. branches**; its 84
-  subscription-specific tests and the full suite pass locally. Both ends of the
-  supported Python/Django matrix, docs and distribution artifacts are green.
 - Working directory is still `django-paypal/`, which no longer matches the
   package name. Cosmetic only.
 
-Shipped in 0.1.0: config, OAuth2 auth with token caching, sync/async clients,
-amounts, models with persisted idempotency keys, Orders v2
-create/authorize/capture, refunds and voids, verified webhooks with an atomic
-claim, a reconciliation command, signals, read-only admin, JS SDK v6 tags,
-runnable demo.
-Ready to ship in 0.2.0: subscriptions (M5).
+Shipped: config, OAuth2 auth with token caching, sync/async clients, amounts,
+models with persisted idempotency keys, Orders v2 create/authorize/capture,
+refunds and voids, verified webhooks with an atomic claim, a reconciliation
+command, signals, read-only admin, JS SDK v6 tags, runnable demo, and
+Subscriptions v1 with products/plans, lifecycle operations and recurring
+payment records.
 Not implemented: Vault and Card Fields (M6).
 
 Goal: a maintained, REST-first PayPal library for Django — Orders v2 checkout,
@@ -553,8 +548,11 @@ Work items:
       with warnings as errors; wheel + sdist build and `twine check` pass.
       The wheel contains `subscriptions.py` and migration `0005`, while repo-only
       `scripts/`, tests, docs and example code are excluded.
-- [ ] **Release M5 as 0.2.0** — version and status references are updated.
-      Commit/push, protected PyPI approval, publication and tag remain.
+- [x] **Released M5 as 0.2.0** (2026-07-29) — commit `b25b38c`, all remote CI
+      jobs green, protected `pypi` deployment approved, trusted publishing
+      succeeded, and the workflow pushed tag `v0.2.0`. Verified from PyPI's
+      version-specific JSON endpoint: wheel 61,181 bytes and sdist 89,221 bytes,
+      both requiring Python 3.11+.
 
 ### M6 — later / maybe
 - [ ] Vault v3 (saved payment methods) — US-only, check we need it
@@ -736,8 +734,8 @@ Still open; none blocks documenting and verifying M5:
       resolved (`PayPalOrder` and `refund_capture` present in
       `api_reference.html`), which means the Django setup in `docs/source/conf.py`
       works in a clean environment.
-- [ ] **M5 implementation, documentation and release verification are complete;
-      0.2.0 publication and tag remain.** See the M5 checklist above.
+- [x] **M5 and release 0.2.0 complete** (2026-07-29). See the M5 checklist
+      above.
 - [x] **Release-doc guard added** (2026-07-29):
       `scripts/check_release_docs.py` checks that version/status references agree
       before docs CI and before a real publish.
