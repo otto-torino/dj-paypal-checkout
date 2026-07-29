@@ -53,7 +53,7 @@ the reasoning behind each decision, including the ones that turned out wrong.*
 Conclusion: there is no library that gives a Django project Orders v2 +
 subscriptions + verified webhooks + models/signals out of the box. That is the gap.
 
-## Decisions taken (with Elisa, 2026-07-28)
+## Decisions taken (2026-07-28)
 
 1. **HTTP layer — own thin client over `httpx`**, sync *and* async, not a wrapper
    around `paypal-server-sdk`. The official SDK is sync-only and covers neither
@@ -210,7 +210,7 @@ M1 stops at the transport layer.
 
 ### M2 — one-off payments (Orders v2)
 
-**Idempotency contract (decided with Elisa, 2026-07-28).** The economic
+**Idempotency contract (decided 2026-07-28).** The economic
 invariant lives in the wrappers, not in the low-level client — which stays
 deliberately *sharp*. Requirements:
 
@@ -237,14 +237,14 @@ deliberately *sharp*. Requirements:
   anyway, since the re-run would mint a different UUID. Accepted cost: transient
   PayPal blips on a bare `client.post()` turn into manual reconciliation. The
   wrappers are what remove that cost, by always supplying a persisted id.
-- **Decided** (Elisa's "modalità più rigorosa", refined): a mutating request with
+- **Decided** (strict mode, refined): a mutating request with
   no `request_id` is *reported* — structured `logger.warning` on
   `paypal_checkout.client` — and `PAYPAL['STRICT_IDEMPOTENCY'] = True` promotes it
   to `PayPalIdempotencyError`, raised **before** anything is sent (not even the
   token request).
 - **Target state: strict on in *every* environment, production included.** An
   earlier draft of the docs said "use it everywhere except production" — that was
-  wrong, and Elisa caught it: CI would then validate a guarantee production does
+  wrong, as the review caught: CI would then validate a guarantee production does
   not have, and the divergence is itself the bug. The warning is a **migration
   phase**, not the production posture. Sequence: warning everywhere (now) →
   strict in tests/CI from day one → strict in production once every call path
@@ -347,7 +347,7 @@ Work items:
       `authorize_order` (hold) and `capture_authorization` (take), same
       persisted-key and recovery rules as captures; key scheme
       `order:<pk>:authorize:<auth_pk>` — **per attempt**, deviating from the
-      literal `order:<pk>:authorize` for the reason Elisa gave about captures: an
+      literal `order:<pk>:authorize` for the same reason as captures: an
       authorization can be denied, and a fixed key would make PayPal replay that
       denial for ever. `Capture.authorization` distinguishes the two capture
       paths, and the two pending pools are kept separate so a recovery can never
@@ -429,7 +429,7 @@ Work items:
 - [x] Docs: new `webhooks.rst` (setup, the two modes, the status-code contract,
       custom handlers, reconciling), plus the endpoint wired into the demo.
 
-#### M3 review follow-ups (Elisa, 2026-07-28) — all three applied
+#### M3 review follow-ups (2026-07-28) — all three applied
 
 - [x] **`400` was documented wrong, and it was my error.** PayPal retries *any*
       non-2xx (~25 attempts over 3 days), so "nothing is retried" was false.
@@ -461,7 +461,7 @@ Work items:
         `:memory:` mode returns "table is locked" immediately instead of
         honouring the busy timeout — the first version of the threaded test
         "passed" with *both* threads erroring before reaching the handler, which
-        is exactly the false confidence Elisa warned about. Suite cost: ~0.5s → ~1s.
+        is exactly the false confidence the review warned about. Suite cost: ~0.5s → ~1s.
 - [x] Documented the shared-account rule explicitly (`webhooks.rst`): unknown
       capture/order/authorization → ignored and acked; unknown capture whose
       `related_ids.order_id` *is* ours → retry, not a foreign payment.
@@ -483,9 +483,11 @@ Work items:
       A completed refund syncs the capture to `REFUNDED`/`PARTIALLY_REFUNDED`.
 - [x] **`void_authorization`** — the one key that is *not* per attempt and *not*
       stored (`void_request_id`), documented as a deliberate exception: voiding
-      is single-shot, so there is no attempt dimension, and PayPal refuses a
-      second void rather than repeating it, so key drift cannot move money.
-      **Worth a second opinion**, since it breaks the "store the key" rule.
+      is single-shot, so there is no attempt dimension. Reviewed against the
+      [Payments v2 API](https://developer.paypal.com/docs/api/payments/v2/#authorizations_void)
+      on 2026-07-29: the endpoint explicitly supports `PayPal-Request-Id`;
+      deriving one stable key from the authorization row therefore preserves
+      retry safety without adding mutable attempt state.
 - [x] **Fixed a real bug found while writing this**: the M3 handler for
       `PAYMENT.CAPTURE.REFUNDED` treated `resource.id` as a *capture* id, but for
       that event the resource is the **refund**. It now resolves the capture via
@@ -636,7 +638,7 @@ configuration, but it is deliberately outside the 0.3.0 release gate.
 
 - [x] Landscape and API surface verified against current PayPal docs/PyPI (2026-07-28).
 - [x] Architecture and milestones drafted (this file).
-- [x] Decisions 1–5 taken with Elisa (2026-07-28); PyPI name availability verified.
+- [x] Decisions 1–5 taken (2026-07-28); PyPI name availability verified.
 - [x] **M0 skeleton done** (2026-07-28), verified locally: install, tests, build,
       `twine check`, docs, YAML all green. Committed on `main` as
       `8dc2463 chore: project skeleton (M0)` (32 files). `CLAUDE.md` and
@@ -659,14 +661,14 @@ configuration, but it is deliberately outside the 0.3.0 release gate.
       tested against real RSA signatures.
 - [x] **M4 done** (2026-07-28): refunds, voids, reconciliation command, strict
       default flipped. 418 tests, 100% coverage.
-- [x] **0.1.0 cut** (2026-07-28), after the RTD import went green — Elisa's
+- [x] **0.1.0 cut** (2026-07-28), after the RTD import went green — the chosen
       sequencing, so the PyPI page is born linking to documentation that works.
       `version` and `__version__` both `0.1.0` (the test that pins them to each
       other passes), `Development Status` moved from Pre-Alpha to Alpha, README
       status rewritten — including the honest caveat that it has not yet run
       against live PayPal traffic. Local build + `twine check` PASSED on both
       artifacts.
-- [x] **Published** (2026-07-28). Elisa approved the `pypi` environment, the run
+- [x] **Published** (2026-07-28). The `pypi` environment was approved, the run
       succeeded, the pending publisher converted into a normal one and the project
       was created. Verified from the PyPI JSON API: version `0.1.0`,
       `requires_python >=3.11`, license MIT, `Development Status :: 3 - Alpha`,
@@ -699,7 +701,7 @@ configuration, but it is deliberately outside the 0.3.0 release gate.
         copying `dj-editor-js` verbatim is what stopped an empty package from
         going to PyPI on the very first push.
       - the **Codecov upload succeeded with no token**, confirming `use_oidc`.
-- [x] **PyPI pending publisher created by Elisa** (2026-07-28). A pending publisher
+- [x] **PyPI pending publisher created** (2026-07-28). A pending publisher
       is the answer to "how do I enable trusted publishing before the project
       exists": it lives in account settings
       (https://pypi.org/manage/account/publishing/), *not* on a project page, and
@@ -712,14 +714,15 @@ configuration, but it is deliberately outside the 0.3.0 release gate.
       auto-creates an environment a job references — but with
       `protection_rules: []`, i.e. no gate at all: the OIDC claim would have
       matched and a version bump would have published immediately. Now it
-      requires a review from `elisarubin`, so a release waits for a human click
-      even if a bump reaches `main` by accident. Notes: `can_admins_bypass` is
-      left `true` (avoids a lockout, and admins bypassing is a deliberate act),
-      no branch policy is set, and protection rules are free here only because the
-      repo is public. Add a team as reviewer if one person is too narrow.
+      requires approval by a designated reviewer, so a release waits for a human
+      click even if a bump reaches `main` by accident. Notes:
+      `can_admins_bypass` is left `true` (avoids a lockout, and admins bypassing
+      is a deliberate act), no branch policy is set, and protection rules are
+      free here only because the repo is public. Add a team as reviewer if one
+      person is too narrow.
       ⚠️ The environment name must match on both sides: change one, change both.
 - [x] **No `CODECOV_TOKEN` at all.** I had copied `token: ${{ secrets.CODECOV_TOKEN }}`
-      from `dj-editor-js` (codecov-action v4). Elisa pointed at
+      from `dj-editor-js` (codecov-action v4). Comparison with
       `www/django-copier`, which uploads with **`use_oidc: true`** on
       codecov-action **v7** — GitHub's OIDC identity authenticates the upload, so
       there is no secret to store or rotate. Adopted, together with that repo's
@@ -736,7 +739,7 @@ configuration, but it is deliberately outside the 0.3.0 release gate.
       Python, PayPal), matching `django-copier`/`django-cookiecutter`. They stay
       grey until the repo, Codecov project and RTD import exist.
 - [x] **Read the Docs import — completed 2026-07-28.**
-      Decision (Elisa, 2026-07-28): **import RTD first, release after**, so the
+      Decision (2026-07-28): **import RTD first, release after**, so the
       PyPI page is born with a working documentation link and the README badge is
       valid from the start.
 
@@ -752,12 +755,12 @@ configuration, but it is deliberately outside the 0.3.0 release gate.
       `codecov`, `deploy-bot-otto` installed and **no** Read the Docs app.
       The App is **https://github.com/apps/read-the-docs-community** (for
       readthedocs.org). Note two traps: `github.com/apps/readthedocs` is an
-      unrelated *private* App owned by someone else — I sent Elisa there first and
+      unrelated *private* App owned by someone else — it was checked first and
       it was a dead end — and `read-the-docs-business` is the paid platform, which
       serves docs from `.readthedocs-hosted.com` and would not match the URL we
       have already published. Install on the **org**, not a personal account, then
       re-sync the repository list on RTD.
-      Elisa is an org `admin`, so no owner approval is needed; the org's
+      An organization admin can install it without owner approval; the org's
       third-party *application* policy governs OAuth apps, not GitHub Apps.
 
       ✅ Installed 2026-07-28: `read-the-docs-community`,
