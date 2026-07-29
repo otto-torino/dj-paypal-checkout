@@ -5,7 +5,7 @@
   <title>dj-paypal-checkout demo</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; }
-    #paypal-button { padding: .75rem 1.5rem; font-size: 1rem; cursor: pointer; }
+    #paypal-button { display: block; max-width: 24rem; }
     #status { margin-top: 1.5rem; padding: .75rem; background: #f4f4f5; }
     table { border-collapse: collapse; margin-top: 2rem; width: 100%; font-size: .85rem; }
     th, td { border-bottom: 1px solid #ddd; padding: .35rem .5rem; text-align: left; }
@@ -22,7 +22,12 @@
 
   <p>The amount above comes from the server. The browser only ever learns an order id.</p>
 
-  <button id="paypal-button" type="button">Pay with PayPal</button>
+  <paypal-button
+    id="paypal-button"
+    type="pay"
+    class="paypal-gold"
+    hidden
+  ></paypal-button>
   <div id="status"></div>
 
   {% if paypal_orders %}
@@ -49,6 +54,9 @@
     const button = document.getElementById("paypal-button");
 
     const say = (text) => { status.textContent = text; };
+    const cleanReturnParams = () => {
+      window.history.replaceState({}, "", window.location.pathname);
+    };
 
     const post = async (url) => {
       const response = await fetch(url, {
@@ -67,31 +75,68 @@
     };
 
     (async () => {
-      const sdk = await window.paypal.createInstance({
-        clientId: cfg.clientId,
-        components: cfg.components,
-      });
+      try {
+        const sdk = await window.paypal.createInstance({
+          clientId: cfg.clientId,
+          components: cfg.components,
+          pageType: "checkout",
+        });
 
-      const session = sdk.createPayPalOneTimePaymentSession({
-        async onApprove(data) {
-          say("Approved, capturing…");
-          const result = await post(`/paypal/${data.orderId}/capture/`);
-          say(result.successful
-            ? `Captured (${result.captureId}). Reload to see the order marked paid.`
-            : `Capture ended as ${result.status}.`);
-        },
-        onCancel() { say("Cancelled by the buyer."); },
-        onError(error) { say(`Error: ${error}`); },
-      });
+        const session = sdk.createPayPalOneTimePaymentSession({
+          async onApprove(data) {
+            say("Approved, capturing…");
+            const result = await post(`/paypal/${data.orderId}/capture/`);
+            cleanReturnParams();
+            say(result.successful
+              ? `Captured (${result.captureId}). Reload to see the order marked paid.`
+              : `Capture ended as ${result.status}.`);
+          },
+          onCancel() {
+            cleanReturnParams();
+            say("Cancelled by the buyer.");
+          },
+          onError(error) {
+            console.error("PayPal payment error:", error);
+            say(`Error: ${error.code || error.message || error}`);
+          },
+        });
 
-      button.addEventListener("click", async () => {
-        try {
-          await session.start({presentationMode: "auto"}, createOrder());
-        } catch (error) {
-          say(`Error: ${error}`);
+        if (session.hasReturned()) {
+          button.disabled = true;
+          say("Returned from PayPal, completing the payment…");
+          try {
+            await session.resume();
+          } catch (error) {
+            console.error("PayPal resume error:", error);
+            say(`Error: ${error.code || error.message || error}`);
+          }
+        } else if (new URLSearchParams(window.location.search).has("cancelled")) {
+          cleanReturnParams();
+          say("Cancelled by the buyer.");
+        } else {
+          const methods = await sdk.findEligibleMethods({currencyCode: cfg.currency});
+          if (!methods.isEligible("paypal")) {
+            say(`PayPal is not eligible for ${cfg.currency} with this sandbox app.`);
+            return;
+          }
+          button.removeAttribute("hidden");
+          button.addEventListener("click", async () => {
+            try {
+              await session.start(
+                {presentationMode: "auto"},
+                createOrder(),
+              );
+            } catch (error) {
+              console.error("PayPal payment start error:", error);
+              say(`Error: ${error.code || error.message || error}`);
+            }
+          });
+          say(`SDK ready (${cfg.environment}, ${cfg.currency}, documented v6 flow).`);
         }
-      });
-      say(`SDK ready (${cfg.environment}, ${cfg.currency}).`);
+      } catch (error) {
+        console.error("PayPal SDK initialization error:", error);
+        say(`SDK error: ${error.code || error.message || error}`);
+      }
     })();
   </script>
 </body>

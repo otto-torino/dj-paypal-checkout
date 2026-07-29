@@ -1,9 +1,8 @@
 """Settings for the dj-paypal-checkout demo.
 
-Sandbox credentials come from the environment — never commit them:
-
-    export PAYPAL_CLIENT_ID=...
-    export PAYPAL_CLIENT_SECRET=...
+Copy ``example/.env.example`` to ``example/.env`` and add the PayPal sandbox
+credentials there. ``run_demo.sh`` loads that file before starting Django; the
+real ``.env`` is ignored by Git and must never be committed.
 """
 
 import os
@@ -61,6 +60,11 @@ DATABASES = {
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 STATIC_URL = "static/"
 USE_TZ = True
+
+# PayPal's popup must remain in the opener's browsing-context group so the Web
+# SDK can complete its cross-origin handshake. Django otherwise defaults to
+# "same-origin", which deliberately severs window.opener.
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin-allow-popups"
 
 PAYPAL = {
     "CLIENT_ID": os.getenv("PAYPAL_CLIENT_ID", ""),

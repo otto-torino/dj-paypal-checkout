@@ -7,15 +7,36 @@ Get sandbox credentials from a REST app in the `PayPal developer dashboard
 
 .. code-block:: bash
 
-   export PAYPAL_CLIENT_ID=...
-   export PAYPAL_CLIENT_SECRET=...
+   cp example/.env.example example/.env
+   # Edit example/.env and replace the two credential placeholders.
    ./run_demo.sh
+
+``run_demo.sh`` loads ``example/.env`` automatically. At minimum it must contain
+the sandbox app's ``PAYPAL_CLIENT_ID`` and ``PAYPAL_CLIENT_SECRET``, as shown in
+``example/.env.example``. The real file is ignored by Git: never commit it and
+never use live credentials for the demo. Environment variables exported by the
+calling shell remain supported as an alternative.
 
 The script creates a venv, installs the library, migrates, creates an
 ``admin``/``password`` superuser and serves:
 
 * http://127.0.0.1:8000/ — the checkout page
 * http://127.0.0.1:8000/admin/ — the read-only PayPal admin
+
+Popup security header
+---------------------
+
+Django's :class:`~django.middleware.security.SecurityMiddleware` defaults
+``Cross-Origin-Opener-Policy`` to ``same-origin``. That isolates a
+cross-origin popup from ``window.opener`` and prevents the PayPal Web SDK from
+finishing its handoff. The demo therefore sets:
+
+.. code-block:: python
+
+   SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin-allow-popups"
+
+Apply the same setting in a host project that uses the PayPal popup. This is
+the policy PayPal recommends for its Web SDK; do not disable COOP entirely.
 
 What it demonstrates
 --------------------
@@ -48,7 +69,10 @@ returns:
 
 .. code-block:: bash
 
-   export PAYPAL_WEBHOOK_ID=...
+   PAYPAL_WEBHOOK_ID=your-sandbox-webhook-id
+
+Add that line to ``example/.env``. It is optional for the synchronous
+create/approve/capture flow.
 
 Then watch the ``WebhookEvent`` rows in the admin: ``processed`` and
 ``last_error`` show exactly what happened, and the same

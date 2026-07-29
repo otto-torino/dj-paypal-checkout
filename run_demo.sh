@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run the dj-paypal-checkout demo against the PayPal sandbox.
 #
-#   export PAYPAL_CLIENT_ID=...
-#   export PAYPAL_CLIENT_SECRET=...
+#   # Either create example/.env with PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET,
+#   # or export them in the current shell.
 #   ./run_demo.sh
 #
 # Credentials come from a sandbox REST app: https://developer.paypal.com/dashboard/applications/sandbox
@@ -10,8 +10,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+if [[ -f example/.env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source example/.env
+  set +a
+fi
+
 if [[ -z "${PAYPAL_CLIENT_ID:-}" || -z "${PAYPAL_CLIENT_SECRET:-}" ]]; then
   echo "PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET must be set (sandbox credentials)." >&2
+  echo "Copy example/.env.example to example/.env and replace its placeholders." >&2
   echo "Create a sandbox REST app at https://developer.paypal.com/dashboard/" >&2
   exit 1
 fi

@@ -3,9 +3,9 @@
 [![CI](https://github.com/otto-torino/dj-paypal-checkout/actions/workflows/ci.yml/badge.svg)](https://github.com/otto-torino/dj-paypal-checkout/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/otto-torino/dj-paypal-checkout/branch/main/graph/badge.svg)](https://codecov.io/gh/otto-torino/dj-paypal-checkout)
 [![Documentation](https://readthedocs.org/projects/dj-paypal-checkout/badge/?version=latest)](https://dj-paypal-checkout.readthedocs.io/)
-![Django 5.2 | 6.0](https://img.shields.io/badge/Django-5.2%20%7C%206.0-092E20?logo=django&logoColor=white)
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
-![PayPal REST](https://img.shields.io/badge/PayPal-Orders%20v2-003087?logo=paypal&logoColor=white)
+[![Django 5.2 | 6.0](https://img.shields.io/badge/Django-5.2%20%7C%206.0-092E20?logo=django&logoColor=white)](https://docs.djangoproject.com/en/stable/)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://docs.python.org/3/)
+[![PayPal REST](https://img.shields.io/badge/PayPal-Orders%20v2-003087?logo=paypal&logoColor=white)](https://developer.paypal.com/docs/api/orders/v2/)
 
 A modern, REST-first PayPal integration for Django: **Orders v2** checkout,
 refunds and **verified webhooks**, with models, signals and admin.
@@ -69,10 +69,17 @@ This library targets the current REST APIs and fills those gaps:
 read-only admin:
 
 ```bash
-export PAYPAL_CLIENT_ID=...      # sandbox REST app credentials
-export PAYPAL_CLIENT_SECRET=...
+cp example/.env.example example/.env
+# Edit example/.env with the client id and secret of a PayPal sandbox REST app.
 ./run_demo.sh                    # http://127.0.0.1:8000/
 ```
+
+`run_demo.sh` loads `example/.env` automatically. The file is ignored by Git
+and must never contain live credentials. `PAYPAL_WEBHOOK_ID` is optional for
+the synchronous checkout and is only needed to test verified webhook delivery.
+The demo also sets Django's `SECURE_CROSS_ORIGIN_OPENER_POLICY` to
+`"same-origin-allow-popups"`, as required for the cross-origin PayPal popup to
+communicate with its opener.
 
 ## Development
 

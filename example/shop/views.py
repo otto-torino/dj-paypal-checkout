@@ -35,12 +35,23 @@ def checkout(request):
 def create(request):
     """Start a PayPal order for the shop order and hand back only its id."""
     order = get_object_or_404(Order, reference="DEMO-1")
+    checkout_url = request.build_absolute_uri("/")
     with PayPalClient() as client:
         paypal_order = create_order(
             client,
             amount=order.total,      # from our own record, never from the request
             currency=order.currency,
             target=order,
+            payment_source={
+                "paypal": {
+                    "experience_context": {
+                        "return_url": checkout_url,
+                        "cancel_url": f"{checkout_url}?cancelled=1",
+                        "shipping_preference": "NO_SHIPPING",
+                        "user_action": "PAY_NOW",
+                    }
+                }
+            },
         )
     return JsonResponse({"orderId": paypal_order.paypal_id})
 
