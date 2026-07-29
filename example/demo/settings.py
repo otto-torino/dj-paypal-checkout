@@ -63,13 +63,13 @@ STATIC_URL = "static/"
 USE_TZ = True
 
 PAYPAL = {
-    "CLIENT_ID": os.environ.get("PAYPAL_CLIENT_ID", ""),
-    "CLIENT_SECRET": os.environ.get("PAYPAL_CLIENT_SECRET", ""),
+    "CLIENT_ID": os.getenv("PAYPAL_CLIENT_ID", ""),
+    "CLIENT_SECRET": os.getenv("PAYPAL_CLIENT_SECRET", ""),
     "LIVE": False,
     "CURRENCY": "EUR",
     # Needed to verify webhook signatures. Register /paypal/webhook/ in the
     # dashboard (a tunnel like ngrok works for local testing) and paste the id.
-    "WEBHOOK_ID": os.environ.get("PAYPAL_WEBHOOK_ID", ""),
+    "WEBHOOK_ID": os.getenv("PAYPAL_WEBHOOK_ID", ""),
     # This is the default; spelled out here because it is worth seeing: a call
     # site that forgets its idempotency key fails loudly instead of quietly.
     "STRICT_IDEMPOTENCY": True,
