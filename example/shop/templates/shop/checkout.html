@@ -5,7 +5,12 @@
   <title>dj-paypal-checkout demo</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; }
-    #paypal-button { display: block; max-width: 24rem; }
+    /* :not([hidden]) is load-bearing. An author `display` declaration beats the
+       UA stylesheet's `[hidden] { display: none }` by origin precedence, so a
+       bare `#paypal-button { display: block }` would show the button before
+       findEligibleMethods() has resolved and make removeAttribute("hidden") a
+       no-op. */
+    #paypal-button:not([hidden]) { display: block; max-width: 24rem; }
     #status { margin-top: 1.5rem; padding: .75rem; background: #f4f4f5; }
     table { border-collapse: collapse; margin-top: 2rem; width: 100%; font-size: .85rem; }
     th, td { border-bottom: 1px solid #ddd; padding: .35rem .5rem; text-align: left; }
