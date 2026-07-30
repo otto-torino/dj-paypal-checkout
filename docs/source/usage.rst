@@ -147,13 +147,45 @@ built here, policy declared:
 
 .. code-block:: python
 
-   from paypal_checkout.payments import refund_capture, void_authorization
+   from paypal_checkout.payments import (
+       refund_capture,
+       retry_refund,
+       void_authorization,
+   )
 
    refund = refund_capture(client, capture)                        # full
    refund = refund_capture(client, capture, amount=Decimal("4.00"),
                            note_to_payer="partial return")         # partial
 
    void_authorization(client, authorization)   # release a hold, take nothing
+
+The exact refund body and its idempotency key are persisted before the network
+call. If the call times out, do not call ``refund_capture`` again with new
+arguments: the library refuses to substitute them silently. Retry the recorded
+operation explicitly:
+
+.. code-block:: python
+
+   pending = capture.pending_refund()
+   refund = retry_refund(client, pending)
+
+Rows created before request-body persistence was introduced have
+``sent_body=None`` and cannot be retried automatically: full and partial refund
+requests cannot be reconstructed safely from their amount alone. If an operator
+can prove from PayPal records that such a row and an adopted remote refund are
+the same operation, merge them explicitly:
+
+.. code-block:: python
+
+   from paypal_checkout.payments import merge_refund_attempt
+
+   refund = merge_refund_attempt(legacy_attempt, adopted_refund)
+
+The PayPal-observed row survives because it may already have been exposed by
+``payment_refunded``. The local request metadata is moved onto it and the
+duplicate attempt is deleted; the merge does not emit ``payment_refunded`` a
+second time. It emits the operational ``refund_attempt_merged`` signal with the
+surviving ``refund`` and an ``attempt`` metadata snapshot.
 
 A refund is refused **locally** when it would take the capture past what was
 captured, counting refunds whose outcome is not known yet — PayPal would refuse
@@ -181,11 +213,16 @@ looked up directly — but the *order* knows about it:
    python manage.py paypal_sync --order 5O190127TN364715T --dry-run
 
 Each order is re-read from PayPal and an unconfirmed local attempt is matched to
-what PayPal reports, signals included. Matching is deliberately conservative:
-only when there is exactly one unconfirmed attempt and one unmatched PayPal
-capture. Anything more ambiguous is reported for a person to resolve — guessing
-which of two attempts became which capture is not something to do silently with
-money.
+what PayPal reports, signals included. Refunds are reconciled per capture.
+Matching is deliberately conservative: only one unconfirmed attempt against one
+unmatched remote operation is attached automatically.
+
+When a remote refund and an interrupted local attempt cannot yet be correlated,
+the remote fact is still recorded and the local attempt becomes
+``UNRESOLVED``. It continues to reserve its amount until
+``retry_refund(client, refund)`` proves whether both rows describe the same
+PayPal operation. ``paypal_sync`` reports unresolved refunds and exits non-zero
+so a periodic job cannot let them stagnate silently.
 
 Errors
 ------
@@ -387,3 +424,11 @@ accept ``**kwargs``. A ``PENDING`` capture sends nothing: it is not an outcome y
 **Handlers must be idempotent.** The same outcome can legitimately reach you
 twice — a capture call and its confirming webhook describe one event, and PayPal
 retries webhooks. Guard your writes; never increment blindly.
+
+Webhook handlers and these signals run synchronously inside the webhook's
+database transaction. Receivers may make fast, idempotent database writes. They
+must not send email, call another service or enqueue a non-transactional task
+directly: a later failure can roll the database transaction back while that
+external effect cannot be undone. For external work, write to your
+application's durable outbox in the same transaction and let your own worker
+deliver it after commit.

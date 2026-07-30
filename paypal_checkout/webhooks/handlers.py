@@ -20,11 +20,11 @@ from ..models import (
     Capture,
     PaymentToken,
     PayPalOrder,
-    Refund,
     Subscription,
     SubscriptionPayment,
 )
 from ..money import parse_amount, parse_amount_payload
+from ..payments import adopt_remote_refund, capture_id_from_refund
 from ..signals import (
     payment_captured,
     payment_denied,
@@ -109,7 +109,16 @@ def _related_ids(resource):
 
 
 def _related_order_id(resource):
-    return _related_ids(resource).get("order_id")
+    order_id = _related_ids(resource).get("order_id")
+    if order_id:
+        return order_id
+    for link in resource.get("links") or []:
+        if not isinstance(link, dict) or link.get("rel") != "up":
+            continue
+        href = (link.get("href") or "").rstrip("/")
+        if "/checkout/orders/" in href:
+            return href.rsplit("/", 1)[-1]
+    return None
 
 
 def _is_ours_but_missing(resource):
@@ -215,43 +224,12 @@ def handle_capture_refunded(event):
 
 def _capture_id_from_links(resource):
     """Fall back to the ``up`` link, which points at the refunded capture."""
-    for link in resource.get("links") or []:
-        if not isinstance(link, dict) or link.get("rel") != "up":
-            continue
-        href = (link.get("href") or "").rstrip("/")
-        if "/captures/" in href:
-            return href.rsplit("/", 1)[-1]
-    return None
+    return capture_id_from_refund({"links": resource.get("links")})
 
 
 def _adopt_refund(capture, resource):
     """Find or create the local refund row this event describes."""
-    refund_id = resource.get("id")
-    if not refund_id:
-        return None
-    refund = Refund.objects.filter(paypal_id=refund_id).first()
-    if refund is not None:
-        return refund.update_from_payload(resource)
-
-    amount = capture.amount
-    currency = capture.currency
-    payload_amount = resource.get("amount")
-    if isinstance(payload_amount, dict):
-        try:
-            amount, currency = parse_amount_payload(payload_amount)
-        except PayPalAmountError:
-            logger.warning(
-                "refund %s has an unreadable amount; recording the capture's",
-                refund_id,
-            )
-    # No request_id: we did not initiate this one (a dashboard refund, say).
-    refund = capture.refunds.create(
-        paypal_id=refund_id,
-        status=Refund.Status.INITIATED,
-        amount=amount,
-        currency=currency,
-    )
-    return refund.update_from_payload(resource)
+    return adopt_remote_refund(capture, resource)
 
 
 @register_handler("CHECKOUT.ORDER.APPROVED", "CHECKOUT.ORDER.COMPLETED")

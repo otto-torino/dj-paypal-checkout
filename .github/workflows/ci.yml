@@ -94,3 +94,42 @@ jobs:
 
     - name: Build the documentation, warnings are errors
       run: sphinx-build -W --keep-going -b html docs/source docs/_ci_build
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: paypal_checkout
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d paypal_checkout"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      with:
+        python-version: "3.13"
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install "Django~=6.0.0" "psycopg[binary]>=3.2"
+
+    - name: Run PostgreSQL refund concurrency tests
+      env:
+        DJANGO_SETTINGS_MODULE: tests.test_settings
+        PAYPAL_TEST_POSTGRES: "1"
+        POSTGRES_DB: paypal_checkout
+        POSTGRES_USER: postgres
+        POSTGRES_PASSWORD: postgres
+      run: python -m django test tests.test_refund_concurrency

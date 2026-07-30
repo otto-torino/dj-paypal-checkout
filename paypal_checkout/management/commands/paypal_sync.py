@@ -16,7 +16,7 @@ from django.utils import timezone
 from ...client import PayPalClient
 from ...config import get_config
 from ...exceptions import PayPalError
-from ...models import Authorization, Capture, PayPalOrder
+from ...models import Authorization, Capture, PayPalOrder, Refund
 from ...orders import reconcile_order
 
 
@@ -35,7 +35,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--unconfirmed",
             action="store_true",
-            help="Reconcile every order with an unconfirmed capture or authorization.",
+            help=(
+                "Reconcile every order with an unconfirmed capture, authorization "
+                "or refund."
+            ),
         )
         parser.add_argument(
             "--since",
@@ -73,7 +76,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("dry run: nothing changed"))
             return
 
-        adopted = failed = 0
+        adopted = failed = unresolved = 0
         with PayPalClient(config) as client:
             for order in orders:
                 try:
@@ -83,10 +86,18 @@ class Command(BaseCommand):
                     self.stderr.write(self.style.ERROR(f"  {order.paypal_id}: {exc}"))
                     continue
                 adopted += len(result.get("adopted", []))
+                unresolved += result.get("unresolved", 0)
 
         self.stdout.write(
-            self.style.SUCCESS(f"done: {adopted} attempt(s) settled, {failed} failed")
+            self.style.SUCCESS(
+                f"done: {adopted} attempt(s) settled, {failed} failed, "
+                f"{unresolved} unresolved refund(s)"
+            )
         )
+        if unresolved:
+            raise CommandError(
+                f"{unresolved} refund attempt(s) still need an explicit retry or review"
+            )
 
     def reconcile(self, client, order):
         result = reconcile_order(client, order)
@@ -95,6 +106,9 @@ class Command(BaseCommand):
             line += f"\n      settled {adopted}"
         for ambiguous in result.get("ambiguous", []):
             line += f"\n      {self.style.WARNING('ambiguous: ' + ambiguous)}"
+        if result.get("unresolved"):
+            warning = f"{result['unresolved']} unresolved refund(s)"
+            line += f"\n      {self.style.WARNING(warning)}"
         self.stdout.write(line)
         return result
 
@@ -115,6 +129,11 @@ class Command(BaseCommand):
         if options["unconfirmed"]:
             filters |= Q(captures__status=Capture.Status.INITIATED) | Q(
                 authorizations__status=Authorization.Status.INITIATED
+            ) | Q(
+                captures__refunds__status__in=(
+                    Refund.Status.INITIATED,
+                    Refund.Status.UNRESOLVED,
+                )
             )
         queryset = queryset.filter(filters).distinct()
 

@@ -23,6 +23,8 @@ from django.db import models, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from .exceptions import PayPalAmountError, PayPalError
+
 __all__ = [
     "PayPalOrder",
     "Authorization",
@@ -487,7 +489,10 @@ class Capture(PendingAttemptMixin):
         PayPal, so it has to count against what is still refundable.
         """
         return self._refund_total(
-            Refund.Status.COMPLETED, Refund.Status.PENDING, Refund.Status.INITIATED
+            Refund.Status.COMPLETED,
+            Refund.Status.PENDING,
+            Refund.Status.INITIATED,
+            Refund.Status.UNRESOLVED,
         )
 
     @property
@@ -504,24 +509,62 @@ class Capture(PendingAttemptMixin):
         """A refund started but never confirmed, if any."""
         return self.refunds.filter(status=Refund.Status.INITIATED).order_by("pk").first()
 
-    def start_refund(self, *, amount=None, note_to_payer="", invoice_id=""):
-        """Persist a refund attempt and return it, key included.
+    def start_refund(
+        self, *, amount=None, note_to_payer="", invoice_id="", sent_body=None
+    ):
+        """Persist one refund attempt after taking the capture's row lock.
 
-        Like captures, an unconfirmed attempt is reused rather than duplicated:
-        its outcome is unknown, so a retry must carry the same key.
+        The pending lookup, available-amount check and insert are one critical
+        section. A retry is deliberately a separate operation: silently reusing
+        an attempt would let new arguments change an old request.
         """
-        pending = self.pending_refund()
-        if pending is not None:
-            return pending
         with transaction.atomic():
-            refund = self.refunds.create(
+            capture = type(self).objects.select_for_update().get(pk=self.pk)
+            pending = (
+                capture.refunds.filter(
+                    status__in=(Refund.Status.INITIATED, Refund.Status.UNRESOLVED)
+                )
+                .order_by("pk")
+                .first()
+            )
+            if pending is not None:
+                raise PayPalError(
+                    f"capture {capture.paypal_id or capture.pk} already has unresolved "
+                    f"refund attempt #{pending.pk}; call retry_refund(client, refund) "
+                    "with that row instead of starting a new request."
+                )
+
+            requested = capture.amount if amount is None else amount
+            available = capture.refundable_amount
+            if requested > available:
+                unresolved = list(
+                    capture.refunds.filter(
+                        status=Refund.Status.UNRESOLVED
+                    ).values_list("pk", flat=True)
+                )
+                review = (
+                    f" Unresolved refund attempt(s) {unresolved} still reserve funds; "
+                    "retry or review them first."
+                    if unresolved
+                    else ""
+                )
+                raise PayPalAmountError(
+                    f"cannot refund {requested} {capture.currency} of capture "
+                    f"{capture.paypal_id or capture.pk}: only {available} "
+                    f"{capture.currency} is still refundable (captured "
+                    f"{capture.amount}, already refunded or in flight "
+                    f"{capture.reserved_refund_amount}).{review}"
+                )
+
+            refund = capture.refunds.create(
                 status=Refund.Status.INITIATED,
-                amount=self.amount if amount is None else amount,
-                currency=self.currency,
+                amount=requested,
+                currency=capture.currency,
                 note_to_payer=note_to_payer or "",
                 invoice_id=invoice_id or "",
+                sent_body=sent_body,
             )
-            refund.request_id = refund_request_id(self.order_id, refund.pk)
+            refund.request_id = refund_request_id(capture.order_id, refund.pk)
             refund.save(update_fields=["request_id", "updated_at"])
         return refund
 
@@ -630,6 +673,9 @@ class Refund(PendingAttemptMixin):
     class Status(models.TextChoices):
         #: Local-only: the row exists, the outcome is not known yet.
         INITIATED = "INITIATED", "Initiated locally"
+        #: Local-only: a remote refund exists, but its relationship to this
+        #: interrupted attempt has not yet been proved.
+        UNRESOLVED = "UNRESOLVED", "Unresolved"
         COMPLETED = "COMPLETED", "Completed"
         PENDING = "PENDING", "Pending"
         CANCELLED = "CANCELLED", "Cancelled"
@@ -645,6 +691,11 @@ class Refund(PendingAttemptMixin):
     currency = models.CharField(max_length=3)
     note_to_payer = models.CharField(max_length=255, blank=True)
     invoice_id = models.CharField(max_length=127, blank=True)
+    # NULL means a pre-migration attempt whose original full/partial request
+    # shape cannot be reconstructed safely. New attempts persist {} for a full
+    # refund and the canonical JSON object for every other request.
+    sent_body = models.JSONField(null=True, blank=True)
+    merge_metadata = models.JSONField(default=dict, blank=True)
     raw = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

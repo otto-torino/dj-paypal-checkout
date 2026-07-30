@@ -13,6 +13,11 @@ Payment signals send ``sender=Capture`` and provide ``capture``, ``order`` and
 linked to one). Subscription and Vault signals use their corresponding local
 models as senders and document their payloads below. Always accept ``**kwargs``
 so receivers remain compatible as signal context grows.
+
+When emitted by a webhook, receivers run synchronously inside the webhook's
+database transaction. Keep them fast and limit them to idempotent database
+writes. Persist external work in the host application's transactional outbox;
+email or network calls cannot be rolled back if a later handler fails.
 """
 
 from django.dispatch import Signal
@@ -21,6 +26,7 @@ __all__ = [
     "payment_captured",
     "payment_denied",
     "payment_refunded",
+    "refund_attempt_merged",
     "subscription_activated",
     "subscription_suspended",
     "subscription_cancelled",
@@ -40,6 +46,11 @@ payment_denied = Signal()
 #: A capture was refunded, fully or partially. Carries ``refund`` when this
 #: project initiated it; a webhook about someone else's refund does not.
 payment_refunded = Signal()
+
+#: A locally interrupted refund attempt was proved to be the same operation as
+#: an already-observed PayPal refund. Carries the surviving ``refund`` and an
+#: ``attempt`` metadata snapshot. This is an operational signal: no money moved.
+refund_attempt_merged = Signal()
 
 
 # -- subscriptions ----------------------------------------------------------

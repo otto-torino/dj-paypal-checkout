@@ -163,6 +163,12 @@ Your own handlers
 Raising propagates to a ``500`` and a retry, so raise for work that genuinely
 has not been done and return normally for anything you have decided to ignore.
 
+Handlers run synchronously, inside the same database transaction as the
+webhook claim. Keep them fast. Database writes must be idempotent; external
+effects such as email, HTTP calls or non-transactional task publication belong
+in the host application's durable outbox. If a later handler raises, database
+writes roll back but an external effect already performed cannot.
+
 Reconciling
 -----------
 

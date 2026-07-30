@@ -44,7 +44,15 @@ class AuthorizationInline(ReadOnlyInline):
 
 class RefundInline(ReadOnlyInline):
     model = Refund
-    fields = ("paypal_id", "status", "amount", "currency", "request_id", "created_at")
+    fields = (
+        "paypal_id",
+        "status",
+        "amount",
+        "currency",
+        "request_id",
+        "sent_body",
+        "created_at",
+    )
     readonly_fields = fields
 
 
@@ -234,6 +242,8 @@ class RefundAdmin(admin.ModelAdmin):
         "currency",
         "note_to_payer",
         "invoice_id",
+        "sent_body",
+        "merge_metadata",
         "raw",
         "created_at",
         "updated_at",

@@ -20,11 +20,18 @@ client remains available for direct calls.
 """
 
 import logging
+from collections import defaultdict
 
 from .client import Idempotency
 from .exceptions import PayPalAmountError, PayPalError
-from .models import Authorization, Capture, PayPalOrder
+from .models import Authorization, Capture, PayPalOrder, Refund
 from .money import amount_payload, parse_amount_payload
+from .payments import (
+    _notify_refunded,
+    adopt_remote_refund,
+    capture_id_from_refund,
+    settle_reconciled_refund,
+)
 from .signals import payment_captured, payment_denied
 
 __all__ = [
@@ -323,6 +330,10 @@ def reconcile_order(client, order):
         kind="authorization",
         result=result,
     )
+    _reconcile_refunds(order, _all_refunds(payload), result)
+    result["unresolved"] = Refund.objects.filter(
+        capture__order=order, status=Refund.Status.UNRESOLVED
+    ).count()
     return result
 
 
@@ -332,6 +343,10 @@ def _all_captures(payload):
 
 def _all_authorizations(payload):
     return _nested(payload, "authorizations")
+
+
+def _all_refunds(payload):
+    return _nested(payload, "refunds")
 
 
 def _nested(payload, key):
@@ -371,6 +386,80 @@ def _reconcile_attempts(order, *, remote, local, kind, result):
     result["adopted"].append(f"{kind} {row.paypal_id} -> {row.status}")
     if kind == "capture":
         _notify(row, order)
+
+
+def _reconcile_refunds(order, remote, result):
+    """Reconcile refunds per capture; ambiguity never crosses capture rows."""
+    by_capture = defaultdict(list)
+    for payload in remote:
+        capture_id = capture_id_from_refund(payload)
+        if capture_id:
+            by_capture[capture_id].append(payload)
+        else:
+            message = (
+                f"PayPal refund {payload['id']} on order {order.paypal_id} has no "
+                "parent capture id; resolve by hand"
+            )
+            result["ambiguous"].append(message)
+            logger.warning(message)
+
+    captures = {
+        capture.paypal_id: capture
+        for capture in order.captures.filter(paypal_id__in=by_capture)
+    }
+    for capture_id, payloads in by_capture.items():
+        capture = captures.get(capture_id)
+        if capture is None:
+            message = (
+                f"{len(payloads)} PayPal refund(s) refer to unknown capture "
+                f"{capture_id} on order {order.paypal_id}; resolve by hand"
+            )
+            result["ambiguous"].append(message)
+            logger.warning(message)
+            continue
+
+        known = {
+            refund.paypal_id: refund
+            for refund in capture.refunds.filter(
+                paypal_id__in=[payload["id"] for payload in payloads]
+            )
+        }
+        for payload in payloads:
+            if payload["id"] in known:
+                refund = known[payload["id"]]
+                was_successful = refund.is_successful
+                refund.update_from_payload(payload)
+                if refund.is_successful:
+                    capture.sync_refund_status()
+                    if not was_successful:
+                        _notify_refunded(refund)
+
+        unmatched = [payload for payload in payloads if payload["id"] not in known]
+        local = list(
+            capture.refunds.filter(status=Refund.Status.INITIATED).order_by("pk")
+        )
+        if not unmatched:
+            continue
+        if len(local) == 1 and len(unmatched) == 1:
+            refund = settle_reconciled_refund(local[0], unmatched[0])
+            result["adopted"].append(f"refund {refund.paypal_id} -> {refund.status}")
+            continue
+
+        if local:
+            message = (
+                f"{len(local)} unconfirmed local refund(s) and {len(unmatched)} "
+                f"unmatched PayPal refund(s) on capture {capture_id}; retry the "
+                "local attempts to resolve them"
+            )
+            result["ambiguous"].append(message)
+            logger.warning(message)
+
+        for payload in unmatched:
+            refund = adopt_remote_refund(capture, payload)
+            result["adopted"].append(f"refund {refund.paypal_id} -> {refund.status}")
+            if refund.is_successful:
+                capture.sync_refund_status()
+                _notify_refunded(refund)
 
 
 def _notify(capture, order):

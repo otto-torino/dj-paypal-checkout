@@ -123,6 +123,11 @@ class ReadOnlyTests(TestCase):
         self.assertIn("transmission_id", webhook_admin.search_fields)
         self.assertIn("last_error", webhook_admin.readonly_fields)
 
+    def test_refund_recovery_state_is_visible(self):
+        refund_admin = RefundAdmin(Refund, django_admin.site)
+        self.assertIn("sent_body", refund_admin.readonly_fields)
+        self.assertIn("merge_metadata", refund_admin.readonly_fields)
+
 
 class EnvironmentColumnTests(TestCase):
     def setUp(self):

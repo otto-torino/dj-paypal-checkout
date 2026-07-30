@@ -278,7 +278,7 @@ class CaptureHandlerTests(OrderFixtureMixin, TestCase):
         resource["amount"] = {"currency_code": "EUR", "value": "not-a-number"}
         event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=resource))
 
-        with self.assertLogs("paypal_checkout.webhooks.handlers", level="WARNING"):
+        with self.assertLogs("paypal_checkout.payments", level="WARNING"):
             dispatch(event)
 
         self.assertEqual(Refund.objects.get(paypal_id=REFUND_ID).amount, capture.amount)
@@ -297,6 +297,25 @@ class CaptureHandlerTests(OrderFixtureMixin, TestCase):
 
     def test_a_foreign_refund_is_ignored(self):
         event = store_event(event_payload("PAYMENT.CAPTURE.REFUNDED", resource=refund_resource()))
+
+        with catch_signal(payment_refunded) as received:
+            dispatch(event)
+
+        self.assertEqual(received, [])
+        self.assertEqual(Refund.objects.count(), 0)
+
+    def test_a_foreign_refund_with_only_a_capture_link_is_ignored(self):
+        resource = refund_resource()
+        del resource["supplementary_data"]
+        resource["links"] = [
+            {
+                "rel": "up",
+                "href": "https://api.paypal.com/v2/payments/captures/FOREIGN",
+            }
+        ]
+        event = store_event(
+            event_payload("PAYMENT.CAPTURE.REFUNDED", resource=resource)
+        )
 
         with catch_signal(payment_refunded) as received:
             dispatch(event)
@@ -335,6 +354,23 @@ class CaptureHandlerTests(OrderFixtureMixin, TestCase):
         """The webhook overtook our own capture response — do not drop it."""
         self.make_order(with_capture=False)
         event = store_event(event_payload())
+
+        with self.assertRaises(PayPalWebhookNotReady):
+            dispatch(event)
+
+    def test_a_capture_can_find_its_order_through_the_up_link(self):
+        self.make_order(with_capture=False)
+        resource = {
+            "id": CAPTURE_ID,
+            "status": "COMPLETED",
+            "links": [
+                {
+                    "rel": "up",
+                    "href": f"https://api.paypal.com/v2/checkout/orders/{ORDER_ID}/",
+                }
+            ],
+        }
+        event = store_event(event_payload(resource=resource))
 
         with self.assertRaises(PayPalWebhookNotReady):
             dispatch(event)
