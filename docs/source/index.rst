@@ -6,10 +6,12 @@ checkout, refunds and **verified webhooks**, with models, signals and admin.
 
 .. note::
 
-   **Version 0.3.0.** One-off payments are covered end to end: Orders v2
+   **Version 0.4.0.** One-off payments are covered end to end: Orders v2
    create/authorize/capture, refunds and voids, verified webhooks, models that
    survive an interrupted call, signals, a reconciliation command and a read-only
-   admin. Subscriptions v1 adds products, plans, create/revise and lifecycle
+   admin. An interrupted refund keeps its persisted request body and idempotency
+   key, is retried explicitly and reconciled per capture, and reserves its amount
+   until its outcome is known. Subscriptions v1 adds products, plans, create/revise and lifecycle
    operations, verified lifecycle/payment webhooks and recurring-payment
    records. Payment Method Tokens v3 adds setup/payment tokens, safe Card Fields
    handoff, verified Vault webhooks and local audit records. The browser-side

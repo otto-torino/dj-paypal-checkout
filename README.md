@@ -11,11 +11,15 @@
 A modern, REST-first PayPal integration for Django: **Orders v2** checkout,
 refunds and **verified webhooks**, with models, signals and admin.
 
-> **Status: 0.3.0.** One-off payments are covered end to end:
+> **Status: 0.4.0.** One-off payments are covered end to end:
 > configuration, OAuth2 auth with token caching, sync/async HTTP clients, amount
 > handling, models with persisted idempotency keys, the Orders v2
 > create/authorize/capture flows, refunds and voids, verified webhooks, a
 > reconciliation command, signals, a read-only admin and a runnable demo.
+> A refund whose call was interrupted is resolved rather than guessed: its exact
+> request body and idempotency key are persisted before the call and replayed on
+> an explicit retry, and while the outcome is in doubt the amount stays reserved,
+> so the same money cannot be refunded twice.
 > Subscriptions add the products/plans catalog, create/revise and lifecycle
 > operations, verified lifecycle/payment webhooks and recurring-payment records.
 > Payment Method Tokens v3 adds setup/payment tokens, verified Vault webhooks
