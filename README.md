@@ -7,6 +7,7 @@
 [![Django 5.2 | 6.0](https://img.shields.io/badge/Django-5.2%20%7C%206.0-092E20?logo=django&logoColor=white)](https://docs.djangoproject.com/en/stable/)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://docs.python.org/3/)
 [![PayPal REST](https://img.shields.io/badge/PayPal-Orders%20v2-003087?logo=paypal&logoColor=white)](https://developer.paypal.com/docs/api/orders/v2/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
 A modern, REST-first PayPal integration for Django: **Orders v2** checkout,
 refunds and **verified webhooks**, with models, signals and admin.
